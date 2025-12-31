@@ -89,7 +89,7 @@ cc_library(
 
 new_local_repository(
     name = "libibverbs",
-    path = "/usr/lib/x86_64-linux-gnu",
+    path = "/usr/lib64",
     build_file_content = """
 cc_library(
     name = "libibverbs",
@@ -97,6 +97,23 @@ cc_library(
          "libibverbs.so",
          "libnl-3.so.200",
          "libnl-route-3.so.200",
+    ],
+    visibility = ["//visibility:public"],
+)
+""",
+)
+
+
+new_local_repository(
+    name = "numa",
+    path = "/usr/lib64",
+    build_file_content = """
+cc_library(
+    name = "numa",
+    srcs = [
+         "libnuma.so",
+         "libnuma.so.1",
+         "libnuma.so.1.0.0",
     ],
     visibility = ["//visibility:public"],
 )

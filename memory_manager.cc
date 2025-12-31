@@ -14,7 +14,9 @@
 
 #include "memory_manager.h"
 
+#include <sys/mman.h>
 #include <errno.h>
+#include <numaif.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -50,6 +52,30 @@ constexpr int kMemoryRegionAccessAll =
     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
     IBV_ACCESS_REMOTE_ATOMIC | IBV_ACCESS_MW_BIND;
 }  // namespace
+
+absl::StatusOr<void*> AllocateNumaMemoryRaw(std::size_t size, int numa_node) {
+  void* ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, 
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  
+  if (ptr == MAP_FAILED) {
+    return absl::InternalError(absl::StrCat("mmap failed: ", strerror(errno)));
+  }
+
+  unsigned long nodemask = (1UL << numa_node);
+  // Note: sizeof(nodemask) * 8 assumes 8 bits per byte.
+  if (mbind(ptr, size, MPOL_BIND, &nodemask, sizeof(nodemask) * 8, 0) != 0) {
+    int err = errno;
+    munmap(ptr, size);
+    return absl::InternalError(absl::StrCat("mbind to node ", numa_node, 
+                                            " failed: ", strerror(err)));
+  }
+
+  return ptr;
+}
+
+void DeallocateNumaMemoryRaw(void* ptr, std::size_t size) {
+  munmap(ptr, size);
+}
 
 absl::Status MemoryResources::AllocateProtectionDomain(
     ibv_context *verbs_context) {
@@ -240,12 +266,18 @@ absl::Status MemoryManager::InitializeResources(
     std::generate_n(recv_memory_block_->data(), recv_memory_block_->size(),
                     std::ref(random));
   }
+  DLOG(INFO) << "Local Controlled Mem Size: " << follower_resources_.GetLocalControlledMemoryBlockSize();
   if (auto local_controlled_memory_block_size =
           follower_resources_.GetLocalControlledMemoryBlockSize();
       local_controlled_memory_block_size > 0) {
-    VLOG(2) << "Total local controlled memory block size: "
+    int mem_bind_numa_node = absl::GetFlag(FLAGS_mem_bind_numa_node);
+    DLOG(INFO) << "mem_bind_numa_node: " << mem_bind_numa_node
+          << " local_controlled_memory_block";
+    NumaAllocator<uint8_t> alloc(mem_bind_numa_node);
+    DLOG(INFO) << "Total local controlled memory block size: "
             << local_controlled_memory_block_size;
-    local_controlled_memory_block_.emplace(local_controlled_memory_block_size);
+    local_controlled_memory_block_.emplace(alloc);
+    local_controlled_memory_block_->resize(local_controlled_memory_block_size);
     std::generate_n(local_controlled_memory_block_->data(),
                     local_controlled_memory_block_->size(), std::ref(random));
   }

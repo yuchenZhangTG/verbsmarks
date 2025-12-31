@@ -39,5 +39,6 @@ ABSL_DECLARE_FLAG(std::string, description);
 ABSL_DECLARE_FLAG(bool, enable_heartbeats);
 ABSL_DECLARE_FLAG(std::string, periodic_result_file_name_template);
 ABSL_DECLARE_FLAG(bool, ignore_outstanding_ops_at_cutoff);
+ABSL_DECLARE_FLAG(int, mem_bind_numa_node);
 
 #endif  // VERBSMARKS_VERBSMARKS_BINARY_FLAGS_H_

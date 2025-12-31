@@ -34,6 +34,39 @@
 
 namespace verbsmarks {
 
+// Internal helper for raw memory allocation (Implemented in .cc)
+absl::StatusOr<void*> AllocateNumaMemoryRaw(std::size_t size, int numa_node);
+void DeallocateNumaMemoryRaw(void* ptr, std::size_t size);
+
+template <typename T>
+struct NumaAllocator {
+  using value_type = T;
+  int numa_node;
+
+  explicit NumaAllocator(int node) : numa_node(node) {}
+
+  template <typename U>
+  NumaAllocator(const NumaAllocator<U>& other) : numa_node(other.numa_node) {}
+
+  T* allocate(std::size_t n) {
+    if (n == 0) return nullptr;
+    auto result = AllocateNumaMemoryRaw(n * sizeof(T), numa_node);
+    
+    if (!result.ok()) {
+      // In Google codebase, if exceptions are off, use LOG(FATAL)
+      throw std::bad_alloc(); 
+    }
+    return static_cast<T*>(result.value());
+  }
+
+  void deallocate(T* p, std::size_t n) {
+    if (p) DeallocateNumaMemoryRaw(p, n * sizeof(T));
+  }
+
+  bool operator==(const NumaAllocator& other) const { return numa_node == other.numa_node; }
+  bool operator!=(const NumaAllocator& other) const { return !(*this == other); }
+};
+
 // This is a auxiliary class mainly to be used by MemoryManager to conveniently
 // organize the memory resources (i.e., protection domain, memory regions and
 // blocks) that belong to a follower, traffic pattern or queue pair. It stores
@@ -221,13 +254,6 @@ class MemoryManager {
     return &recv_memory_block_.value();
   }
 
-  const std::vector<uint8_t> *GetLocalControlledMemoryBlock() const {
-    if (!local_controlled_memory_block_.has_value()) {
-      return nullptr;
-    }
-    return &local_controlled_memory_block_.value();
-  }
-
   const std::vector<uint8_t> *GetRemoteControlledMemoryBlock() const {
     if (!remote_controlled_memory_block_.has_value()) {
       return nullptr;
@@ -252,7 +278,7 @@ class MemoryManager {
       queue_pair_resources_;
 
   std::optional<std::vector<uint8_t>> recv_memory_block_ = std::nullopt;
-  std::optional<std::vector<uint8_t>> local_controlled_memory_block_ =
+  std::optional<std::vector<uint8_t, NumaAllocator<uint8_t>>> local_controlled_memory_block_ =
       std::nullopt;
   std::optional<std::vector<uint8_t>> remote_controlled_memory_block_ =
       std::nullopt;

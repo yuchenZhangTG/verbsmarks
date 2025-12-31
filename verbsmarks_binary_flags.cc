@@ -75,3 +75,6 @@ ABSL_FLAG(std::string, periodic_result_file_name_template, "",
 ABSL_FLAG(bool, ignore_outstanding_ops_at_cutoff, false,
           "Do not error out on any outstanding ops after the hard cutoff time "
           "(potentially benign for openloop)");
+
+ABSL_FLAG(int, mem_bind_numa_node, -1,
+          "NUMA node for memory allocation. Binding skipped if <0.");
