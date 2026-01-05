@@ -63,8 +63,8 @@ class QueuePairSelector {
 class RoundRobinQueuePairSelector : public QueuePairSelector {
  public:
   explicit RoundRobinQueuePairSelector(
-      const proto::PerFollowerTrafficPattern &pattern) {
-    for (const auto &queue_pair : pattern.queue_pairs()) {
+      const proto::PerFollowerTrafficPattern& pattern) {
+    for (const auto& queue_pair : pattern.queue_pairs()) {
       if (queue_pair.is_initiator()) {
         initiator_queue_pair_ids_.emplace_back(queue_pair.queue_pair_id());
       }
@@ -96,8 +96,8 @@ class RoundRobinQueuePairSelector : public QueuePairSelector {
 class UniformRandomQueuePairSelector : public QueuePairSelector {
  public:
   explicit UniformRandomQueuePairSelector(
-      const proto::PerFollowerTrafficPattern &pattern) {
-    for (const auto &queue_pair : pattern.queue_pairs()) {
+      const proto::PerFollowerTrafficPattern& pattern) {
+    for (const auto& queue_pair : pattern.queue_pairs()) {
       if (queue_pair.is_initiator()) {
         initiator_queue_pair_ids_.emplace_back(queue_pair.queue_pair_id());
       }
@@ -126,11 +126,11 @@ class TrafficGenerator {
   // used instead of creating them internally (for testing purposes).
   // logic (testing purpose).
   static absl::StatusOr<std::unique_ptr<TrafficGenerator>> Create(
-      ibv_context *context, ibverbs_utils::LocalIbverbsAddress local_address,
+      ibv_context* context, ibverbs_utils::LocalIbverbsAddress local_address,
       proto::PerFollowerTrafficPattern traffic_pattern,
       absl::flat_hash_map<int32_t, std::unique_ptr<QueuePair>>
           override_queue_pairs = {},
-      const MemoryManager *memory_manager = nullptr,
+      const MemoryManager* memory_manager = nullptr,
       std::unique_ptr<CompletionQueueManager>
           override_completion_queue_manager = nullptr);
 
@@ -138,10 +138,11 @@ class TrafficGenerator {
   // QPs. e.g. pingpong preparation.
   absl::Status Prepare();
 
-  // Destroy qps. Optional.
-  absl::Status Cleanup();
+  // Destroy QPs preemptively using a threadpool. Skipped for small QP counts,
+  // where there is no significant performance benefit to parallel cleanup.
+  void Cleanup();
 
-  ~TrafficGenerator() { Cleanup().IgnoreError(); }
+  ~TrafficGenerator();
 
   std::unique_ptr<SpecialTrafficGenerator> special_traffic_generator_;
 
@@ -149,7 +150,7 @@ class TrafficGenerator {
   // counterparts, using `remote_qp_attributes_fetcher` for network requests.
   // This method blocks on network communication.
   absl::Status ConnectQueuePairs(
-      RemoteQueuePairAttributesFetcher &remote_qp_attributes_fetcher,
+      RemoteQueuePairAttributesFetcher& remote_qp_attributes_fetcher,
       std::shared_ptr<grpc::ChannelCredentials> creds =
           utils::GetGrpcChannelCredentials());
 
@@ -162,13 +163,13 @@ class TrafficGenerator {
   // Asks the queue pair with `queue_pair_id` to fill in `attrs`. Returns an
   // error if `queue_pair_id` is invalid.
   absl::Status PopulateRemoteQueuePairAttributes(
-      int32_t queue_pair_id, proto::RemoteQueuePairAttributes &attrs);
+      int32_t queue_pair_id, proto::RemoteQueuePairAttributes& attrs);
 
   // Populate remote queue pair attributes for multiple queue pairs. Returns an
   // error if any queue pair id is invalid or the QP is in a bad state.
   absl::Status PopulateAttributesForQps(
       proto::QueuePairAttributesRequest request,
-      proto::QueuePairAttributesResponse &response);
+      proto::QueuePairAttributesResponse& response);
 
   // Retrieves per-second statistics from each QP, returning any metrics that
   // are available since the previous call to this function. This is thread-
@@ -176,7 +177,7 @@ class TrafficGenerator {
   proto::CurrentStats::TrafficCurrentStats GetCurrentStatistics();
 
   // Returns the aggregated results of each queue pair in this traffic pattern.
-  const proto::PerTrafficResult &GetSummary();
+  const proto::PerTrafficResult& GetSummary();
 
   // Shuts down the traffic generator immediately due to an external error, by
   // setting `stop_experiment_time_ns_` to the current time and
@@ -186,7 +187,7 @@ class TrafficGenerator {
 
  private:
   TrafficGenerator(
-      ibv_context *context, ibverbs_utils::LocalIbverbsAddress local_address,
+      ibv_context* context, ibverbs_utils::LocalIbverbsAddress local_address,
       proto::PerFollowerTrafficPattern traffic_pattern,
       std::unique_ptr<LoadGenerator> load_generator,
       std::unique_ptr<QueuePairSelector> queue_pair_selector_,
@@ -198,7 +199,7 @@ class TrafficGenerator {
   // CompletionQueueManager. Used internally by TrafficGenerator factory.
   static absl::StatusOr<std::unique_ptr<CompletionQueueManager>>
   InitializeCompletionQueueManager(
-      ibv_context *context, proto::PerFollowerTrafficPattern traffic_pattern);
+      ibv_context* context, proto::PerFollowerTrafficPattern traffic_pattern);
 
   // Returns next RDMA operation and its size to issue based on the traffic
   // pattern.
@@ -211,7 +212,7 @@ class TrafficGenerator {
 
   // Returns next QueuePair to post an operation based on the traffic pattern.
   // Returns nullptr if there is no initiating queue pair.
-  QueuePair *GetNextQueuePair();
+  QueuePair* GetNextQueuePair();
 
   // If `time_to_post_next_op` has passed and `stop_experiment_time` has not yet
   // passed, picks the appropriate operation type, size, and queue pair on which
@@ -257,10 +258,10 @@ class TrafficGenerator {
   absl::flat_hash_map<std::pair<absl::StatusCode, std::string>, uint32_t>
       failed_operation_posts_;
 
-  // Map to count failed poll ops by error type. Maps status code/message to
-  // failure count. Does not include poll operations returning no completions.
-  absl::flat_hash_map<std::pair<absl::StatusCode, std::string>, uint32_t>
-      failed_operation_polls_;
+  // Map to count failed poll ops by ibv_wc_status. Does not include poll
+  // operations returning no completions, returning IBV_WC_SUCCESS, or failures
+  // due to internal verbsmarks errors which are treated as fatal.
+  absl::flat_hash_map<ibv_wc_status, uint32_t> failed_operation_polls_;
 
   // The number of ops remaining after the experiment finishes.
   uint32_t remaining_outstanding_ops_ = 0;
@@ -274,10 +275,10 @@ class TrafficGenerator {
   // Map from queue pair id to queue pair.
   absl::flat_hash_map<int32_t, std::unique_ptr<QueuePair>> queue_pairs_;
   // A vector of references to Queue Pairs for slightly faster iteration.
-  std::vector<QueuePair *> queue_pair_pointers_;
+  std::vector<QueuePair*> queue_pair_pointers_;
   // Map of queue pair pointers by internal ibverbs qp_num, to match a
   // completion to the corresponding QueuePair.
-  absl::flat_hash_map<uint32_t, QueuePair *> queue_pairs_by_ibv_qp_num_;
+  absl::flat_hash_map<uint32_t, QueuePair*> queue_pairs_by_ibv_qp_num_;
 
   // State for tracking whether the traffic generator has started or stopped
   // measurements. These are only accessed by polling thread, so no lock needed.
@@ -299,6 +300,9 @@ class TrafficGenerator {
   // Abort notification to end experiment before it is finished, set via Abort()
   // method, called by follower main thread.
   absl::Notification abort_;
+
+  // Thread used for parallel QP cleanup. Initialized in Cleanup() if needed.
+  std::unique_ptr<utils::ThreadPool> cleanup_thread_pool_;
 };
 
 }  // namespace verbsmarks

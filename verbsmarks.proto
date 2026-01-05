@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -92,7 +92,6 @@ message ExplicitTraffic {
     int32 initiator = 1;
     int32 target = 2;
 
-    //
     // Repeats the flow. This is only supported in explicit traffic pattern.
     int32 repeat = 3;
   }
@@ -103,15 +102,15 @@ message ExplicitTraffic {
 
 // Pingpong traffic is uni-directional; initiators always generate the Ping and
 // targets always respond with a Pong. When bidi is desired, use multiple
-// traffics. When skip_latency_stats is set, will report last pingpong latency
-// only, and not distribution stats. If skip_latency_stats is undefined, it
+// traffics. When sample_latency is set, will report last pingpong latency
+// samples only, and not distribution stats. If sample_latency is undefined, it
 // will be enabled by default if use_event is set.
 message PingPongTraffic {
   int32 initiator = 1;
   int32 target = 2;
   int64 iterations = 3;
   bool use_event = 4;
-  bool skip_latency_stats = 5;
+  bool sample_latency = 5;
 }
 
 message BandwidthTraffic {
@@ -416,7 +415,6 @@ message GlobalTrafficPattern {
   int32 override_queue_depth = 10;
 
   // Parameters specific to each traffic type.
-  //
   oneof traffic_oneof {
     IncastTraffic incast_traffic = 100;
     UniformRandomTraffic uniform_random_traffic = 101;
@@ -489,8 +487,6 @@ message QueuePairConfig {
   // QueuePair.
   uint32 max_outstanding_ops = 3;
 
-  //
-
   // When true, sets the op buffer data deterministically so that it can be
   // validated that the correct data was set inter-process or inter-machine.
   bool validate_op_buffers = 5;
@@ -516,7 +512,7 @@ message QueuePairConfig {
 
   // The number of prepost of receive request. Only applicable when it should
   // post receives.
-  uint32 num_prepost_receive_ops = 11;
+  int32 num_prepost_receive_ops = 11;
 
   // If bigger than 0, use this for queue_depth, instead of calculated values.
   uint32 override_queue_depth = 12;
@@ -719,7 +715,6 @@ message StartExperimentResponse {
 }
 
 // Generic container for measured performance metrics with description label.
-//
 message Metric {
   string description = 1;
 
@@ -743,6 +738,7 @@ message LatencyResult {
   google.protobuf.Duration p999_latency = 4;
   google.protobuf.Duration p9999_latency = 5;
   google.protobuf.Duration min_latency = 6;
+  google.protobuf.Duration max_latency = 7;
 }
 
 message Statistics {
@@ -798,6 +794,10 @@ message PerTrafficResult {
   // from some of the seconds, but the test still passed since there were
   // still some data gets collected. We want to uncover such scenario.
   uint32 no_op_time_sec = 17;
+
+  // Raw latency samples collected from pingpong traffic generator, filled if
+  // sampling is enabled via sample_latency field.
+  repeated google.protobuf.Duration latency_samples = 18;
 }
 
 // Real-time per-second metrics communicated from follower to leader while

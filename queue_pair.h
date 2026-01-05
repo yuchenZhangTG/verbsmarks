@@ -73,13 +73,13 @@ struct MemoryBlockMetadata {
 // The view describes the resources belonging to a queue pair but does not bear
 // ownership of any object.
 struct QueuePairMemoryResourcesView {
-  ibv_pd *protection_domain;
+  ibv_pd* protection_domain;
   // A type of memory might not exist. The external resource allocator (e.g.,
   // MemoryManager) determines and only allocates the necessary types of memory
   // regions and blocks for the traffic characteristics that a QueuePair runs.
-  std::optional<std::vector<ibv_mr *>> recv_memory_regions;
-  std::optional<std::vector<ibv_mr *>> local_controlled_memory_regions;
-  std::optional<std::vector<ibv_mr *>> remote_controlled_memory_regions;
+  std::optional<std::vector<ibv_mr*>> recv_memory_regions;
+  std::optional<std::vector<ibv_mr*>> local_controlled_memory_regions;
+  std::optional<std::vector<ibv_mr*>> remote_controlled_memory_regions;
   std::optional<MemoryBlockMetadata> recv_memory_block_metadata;
   std::optional<MemoryBlockMetadata> local_controlled_memory_block_metadata;
   std::optional<MemoryBlockMetadata> remote_controlled_memory_block_metadata;
@@ -128,13 +128,13 @@ struct ArrayMemorySpace {
 class ArrayMemoryKeySpace {
  public:
   // Initialize from rkeys in remote attributes.
-  void Initialize(const google::protobuf::RepeatedField<uint32_t> &rkeys) {
+  void Initialize(const google::protobuf::RepeatedField<uint32_t>& rkeys) {
     memory_keys_ = {rkeys.begin(), rkeys.end()};
     index_ = 0;
   }
 
   // Initialize from lkeys in local memory regions.
-  void Initialize(const std::vector<ibv_mr *> &mrs) {
+  void Initialize(const std::vector<ibv_mr*>& mrs) {
     for (auto mr : mrs) {
       memory_keys_.push_back(mr->lkey);
     }
@@ -171,10 +171,10 @@ class QueuePair {
   // Creates a QueuePair that will issue traffic on the context and with the
   // address provided. The caller owns the context pointer. By default, the
   // QueuePair does not collect measurements from operations.
-  QueuePair(ibv_context *context,
+  QueuePair(ibv_context* context,
             const ibverbs_utils::LocalIbverbsAddress local_address,
             const proto::QueuePairConfig config, bool is_pingpong = false,
-            CompletionQueueManager *completion_queue_manager = nullptr);
+            CompletionQueueManager* completion_queue_manager = nullptr);
 
   // Makes class abstract, to be subclassed by different queue pair modes.
   virtual ~QueuePair() = default;
@@ -220,7 +220,7 @@ class QueuePair {
   // if this queue pair's resources are not initialized, as some attributes are
   // properties of those resources.
   virtual absl::Status PopulateRemoteAttributes(
-      proto::RemoteQueuePairAttributes &remote_attrs);
+      proto::RemoteQueuePairAttributes& remote_attrs);
 
   // Implementations connect this queue pair to its remote counterpart.
   // Transitions the queue pair state from Reset -> Init -> Ready to Receive ->
@@ -229,7 +229,7 @@ class QueuePair {
   // this queue pair does not have its resources initialized or is already
   // connected to a remote.
   virtual absl::Status ConnectToRemote(
-      const proto::RemoteQueuePairAttributes &remote_attributes) = 0;
+      const proto::RemoteQueuePairAttributes& remote_attributes) = 0;
 
   enum class OpSignalType { kSignalAll, kLastInBatch, kOnlyRecv };
   // Issues `batch_size` work requests with one operation each of the type and
@@ -240,7 +240,7 @@ class QueuePair {
   // will be unsignaled. Because only one WR will generate a completion, work
   // requests in the batch will be chained via next_wr_to_process and be
   // processed when the signaled work request is processed.
-  virtual absl::Status PostOps(const OpTypeSize &op_type_size,
+  virtual absl::Status PostOps(const OpTypeSize& op_type_size,
                                int32_t batch_size, OpSignalType signal_type) {
     return PostOps(op_type_size, batch_size, signal_type, std::nullopt);
   }
@@ -253,9 +253,9 @@ class QueuePair {
   // Processes an ibv_wc completion by updating outstanding operation metadata,
   // and for recv completions, posting new recv buffers. Caller provides
   // timestamps for the polling call, from CompletionInfo. Returns change in
-  // completed op count (either 1 or 0, since recvs are not counted), which
-  // enables updating the load generator's load calculation.
-  virtual absl::StatusOr<int> HandleExternalCompletion(const ibv_wc &completion,
+  // completed op count: 1 for successful read/send/write, 0 if completion has
+  // error status or type is recv.
+  virtual absl::StatusOr<int> HandleExternalCompletion(const ibv_wc& completion,
                                                        int64_t before_poll,
                                                        int64_t after_poll);
 
@@ -298,10 +298,10 @@ class QueuePair {
   }
 
   // Clears a failed completion from the tracking data structure.
-  virtual void ProcessFailedCompletion(const ibv_wc &completion);
+  virtual void ProcessFailedCompletion(const ibv_wc& completion);
 
   virtual absl::StatusOr<uint64_t> ProcessReceiveCompletion(
-      const ibv_wc &completion);
+      const ibv_wc& completion);
 
   // Processes internal tracking of a completed work request with `wr_id`.
   // Unsignaled work requests do not generate completion but they should be
@@ -373,16 +373,16 @@ class QueuePair {
     // the PerOpTypeSize proto if stats were available and written, nullptr
     // otherwise. Intended to be called during the experiment runtime by a
     // separate thread.
-    proto::CurrentStats::PerOpTypeSizeCurrentStats *PopCurrentStatistics(
-        proto::CurrentStats::QueuePairCurrentStats *qp_stats_output);
+    proto::CurrentStats::PerOpTypeSizeCurrentStats* PopCurrentStatistics(
+        proto::CurrentStats::QueuePairCurrentStats* qp_stats_output);
 
     // Returns the tracker's cumulative latency tdigest, allowing the caller to
     // calculate an aggregate tdigest.
-    const folly::TDigest &GetLatencyTdigest() const { return latency_tdigest_; }
+    const folly::TDigest& GetLatencyTdigest() const { return latency_tdigest_; }
 
     // Move constructor. Necessary for correctness of per-second stats mutex
     // when StatisticsTrackers are emplaced directly as flat_hash_map values.
-    StatisticsTracker(StatisticsTracker &&old) {
+    StatisticsTracker(StatisticsTracker&& old) {
       absl::MutexLock old_lock(&old.statistics_per_second_mutex_);
       absl::MutexLock new_lock(&statistics_per_second_mutex_);
       enable_per_second_stats_ = old.enable_per_second_stats_;
@@ -404,7 +404,7 @@ class QueuePair {
     // AddMeasurement/FinishMeasurements. Saves the associated outstanding op
     // count into each interval record.
     void AppendPerSecondStatistics(
-        const std::vector<proto::ThroughputResult> &throughput_intervals,
+        const std::vector<proto::ThroughputResult>& throughput_intervals,
         int outstanding_op_count);
 
     bool enable_per_second_stats_;
@@ -429,8 +429,8 @@ class QueuePair {
   virtual void AccessStatistics(
       std::function<
           void(const absl::flat_hash_map<std::pair<proto::RdmaOp, int32_t>,
-                                         StatisticsTracker> &,
-               const utils::LatencyTracker &, const utils::LatencyTracker &)>
+                                         StatisticsTracker>&,
+               const utils::LatencyTracker&, const utils::LatencyTracker&)>
           fn) {
     fn(statistics_trackers_, post_latency_tracker_, poll_latency_tracker_);
   }
@@ -458,13 +458,13 @@ class QueuePair {
 
   // Traffic generator can construct work request and post directly using this
   // function.
-  virtual int PostSend(ibv_send_wr *wr, ibv_send_wr **bad_wr) {
+  virtual int PostSend(ibv_send_wr* wr, ibv_send_wr** bad_wr) {
     return ibv_post_send(queue_pair_.get(), wr, bad_wr);
   }
 
   // Traffic generator can construct recv work request and post directly using
   // this function.
-  virtual int PostRecv(ibv_recv_wr *wr, ibv_recv_wr **bad_wr) {
+  virtual int PostRecv(ibv_recv_wr* wr, ibv_recv_wr** bad_wr) {
     return ibv_post_recv(queue_pair_.get(), wr, bad_wr);
   }
 
@@ -488,10 +488,10 @@ class QueuePair {
   uint64_t GetRemoteMemoryBaseAddr() const {
     return reinterpret_cast<uint64_t>(remote_attributes_->addr());
   }
-  virtual struct ibv_mr *GetLocalMemoryRegion() {
+  virtual struct ibv_mr* GetLocalMemoryRegion() {
     return own_local_controlled_memory_region_.get();
   }
-  virtual struct ibv_mr *GetRemoteMemoryRegion() {
+  virtual struct ibv_mr* GetRemoteMemoryRegion() {
     return own_remote_controlled_memory_region_.get();
   }
   // We do not check if key space is empty for better performance. Accessing an
@@ -506,14 +506,14 @@ class QueuePair {
   void EnableTracing(bool should_trace) { should_trace_ = should_trace; }
 
   // QueuePair is moveable but not copyable
-  QueuePair(QueuePair &&other) = default;
-  QueuePair &operator=(QueuePair &&other) = default;
+  QueuePair(QueuePair&& other) = default;
+  QueuePair& operator=(QueuePair&& other) = default;
 
  protected:
   absl::Status ConnectToRemoteQp(
-      const proto::RemoteQueuePairAttributes &remote_attributes);
+      const proto::RemoteQueuePairAttributes& remote_attributes);
   absl::Status ConnectToRemoteAh(
-      const proto::RemoteQueuePairAttributes &remote_attributes);
+      const proto::RemoteQueuePairAttributes& remote_attributes);
 
   enum class State {
     // Ibverbs resources are uninitialized.
@@ -533,7 +533,7 @@ class QueuePair {
 
   // Const protos are inherently thread-safe.
   proto::QueuePairConfig config_;
-  ibv_context *context_;
+  ibv_context* context_;
   const ibverbs_utils::LocalIbverbsAddress local_address_;
   int wqe_cap_;
   int max_cqe_;
@@ -563,9 +563,9 @@ class QueuePair {
   // See comment on public PostOps method for interface details. This method
   // additionally takes in an optional address handle. When provided, `ud`
   // struct in the work request is populated.
-  virtual absl::Status PostOps(const OpTypeSize &op_type_size,
+  virtual absl::Status PostOps(const OpTypeSize& op_type_size,
                                int32_t batch_size, OpSignalType signal_type,
-                               std::optional<ibv_ah *> address_handle);
+                               std::optional<ibv_ah*> address_handle);
 
   // Posts a receive operation at `addr`. Receive buffers are the size of the
   // largest possible operation. For UD queue pairs, this includes space for
@@ -584,10 +584,10 @@ class QueuePair {
   //  outstanding_initiated_operations_[3].unsignaled_wr_id_to_process=2
   //  outstanding_initiated_operations_[2].unsignaled_wr_id_to_process=1
   //  outstanding_initiated_operations_[1].unsignaled_wr_id_to_process=0
-
+  //
   // When wr 3 is completed, we only get a completion that says wr 3 is
   // successfully completed.
-
+  //
   // We look up outstanding_initiated_operations_[3] and process state. Then we
   // notice there's `unsignaled_wr_id_to_process`, which is 2. So we process 2.
   // Again, it will tell us to process 1. Then we're done.
@@ -660,7 +660,7 @@ class QueuePair {
 
   // Ibverbs functions are themselves thread safe and so ibverbs structs do not
   // need to be protected with a mutex.
-
+  //
   std::unique_ptr<ibv_pd, ibverbs_utils::ProtectionDomainDeleter>
       own_protection_domain_;
   std::unique_ptr<ibv_mr, ibverbs_utils::MemoryRegionDeleter>
@@ -676,7 +676,7 @@ class QueuePair {
   // Pointers to protection domain and memory regions. All operations on these
   // objects must use these pointers. Therefore they must be filled even if the
   // queue pair allocates these objects for backward compatibility.
-  ibv_pd *protection_domain_;
+  ibv_pd* protection_domain_;
 
   // Saves remote-controlled MRs allocated by local follower, to generate
   // attributes for access from remote
@@ -700,7 +700,7 @@ class QueuePair {
   // Pointer to traffic generator owned CompletionQueueManager. Needed for
   // QueuePair to receive wr_ids and initialize QueuePair using its assigned
   // ibv_cq.
-  CompletionQueueManager *completion_queue_manager_;
+  CompletionQueueManager* completion_queue_manager_;
 
   // Info for each failed completion which originated from this QueuePair.
   std::vector<std::string> failed_completion_messages_;
@@ -731,7 +731,7 @@ class RcQueuePair : public QueuePair {
 
   // See comment in QueuePair for interface details.
   absl::Status ConnectToRemote(
-      const proto::RemoteQueuePairAttributes &remote_attributes) override {
+      const proto::RemoteQueuePairAttributes& remote_attributes) override {
     return QueuePair::ConnectToRemoteQp(remote_attributes);
   }
 };
@@ -747,12 +747,12 @@ class UdQueuePair : public QueuePair {
   // See comment in QueuePair for interface details. Additionally, this
   // implementation creates an address handle to the remote.
   absl::Status ConnectToRemote(
-      const proto::RemoteQueuePairAttributes &remote_attributes) override {
+      const proto::RemoteQueuePairAttributes& remote_attributes) override {
     return QueuePair::ConnectToRemoteAh(remote_attributes);
   }
 
   // See comment in QueuePair for interface details.
-  absl::Status PostOps(const OpTypeSize &op_type_size, int32_t batch_size,
+  absl::Status PostOps(const OpTypeSize& op_type_size, int32_t batch_size,
                        OpSignalType signal_type) override {
     const auto op_type = op_type_size.op_type;
     if (op_type != proto::RDMA_OP_SEND_RECEIVE &&

@@ -85,6 +85,11 @@ absl::Status CreateExperimentDescription(
 // Set the loopback flag.
 void SetSweepLoopback(bool is_loopback);
 
+// Set the traffic pattern for multiple nics in the template config.
+proto::LeaderConfig RepeatTrafficForMultipleNics(int num_nics,
+                                                 proto::LeaderConfig& config,
+                                                 int pairing_offset);
+
 }  // namespace verbsmarks
 
 #endif  // VERBSMARKS_TOOLS_EXPERIMENT_SWEEP_PARAMETER_UTIL_H_

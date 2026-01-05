@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -41,7 +41,6 @@
 #include "tools/experiment_config.pb.h"
 #include "verbsmarks.pb.h"
 
-//
 ABSL_FLAG(bool, affinity_loopback, false,
           "If true, thread affinity is set loopback friendly when thread cnt "
           "is applied.");
@@ -52,7 +51,6 @@ ABSL_FLAG(uint32_t, min_core_id, 1,
           "used to avoid running traffic on cores that might have kernel "
           "interrupts to potentially reach better performance.");
 
-//
 ABSL_FLAG(uint32_t, max_cpus, 256,
           "Max number of cores the host supports."
           "Find the value from the target host.");
@@ -107,7 +105,6 @@ SweepParameters GetVerbsmarksSweepParameters(
       std::string op_ratio_config;
       google::protobuf::TextFormat::PrintToString(it, &op_ratio_config);
       absl::StrReplaceAll({{"\t", ""}, {"\n", " "}}, &op_ratio_config);
-      LOG(INFO) << "*** op_ratio_config: \"" << op_ratio_config << "\"";
       op_ratio_configs_vec.push_back(
           absl::StrCat("op_ratio_configs-", op_ratio_config));
     }
@@ -291,11 +288,75 @@ std::pair<std::string, std::string> ConstructExperimentId(
   return std::make_pair(experiment_name, repeat_id.at(1));
 }
 
+void SetExplicitThreadAffinityPerPair(proto::LeaderConfig& config,
+                                      int num_threads_per_pattern) {
+  int core = absl::GetFlag(FLAGS_min_core_id);
+  int pair_id = 0;
+  for (int follower_id = 0; follower_id < config.group_size(); ++follower_id) {
+    // We can re-use the core range for followers on different hosts.
+    // For example, if we have 4 followers, 2 on each host, and 2 threads per
+    // follower, we can assign core 0 to follower 0 on host 0, core 1 to
+    // follower 1 on host 0, core 0 to follower 0 on host 1, and core 1 to
+    // follower 1 on host 1, and so on.
+    // This is useful when we want to assign cores in pairs.
+
+    // support num_hosts = 2.
+    if (follower_id % 2 == 1) {
+      core = (pair_id) * (num_threads_per_pattern) + 1;
+      ++pair_id;
+    }
+    for (auto& traffic : config.traffic_patterns()) {
+      // Assign a core only if the current follower is in the participant
+      // list.
+      if (traffic.participants().has_specific_followers()) {
+        if (follower_id !=
+                traffic.participants().specific_followers().participant(0) &&
+            follower_id !=
+                traffic.participants().specific_followers().participant(1)) {
+          continue;
+        }
+      }
+      auto* added = config.mutable_explicit_thread_affinity_param()
+                        ->add_explicit_thread_affinity_configs();
+      added->set_follower_id(follower_id);
+      added->set_traffic_pattern_id(traffic.global_traffic_id());
+      added->set_cpu_core_id(core % absl::GetFlag(FLAGS_max_cpus));
+      ++core;
+    }
+  }
+}
+
+proto::LeaderConfig RepeatTrafficForMultipleNics(int num_nics,
+                                                 proto::LeaderConfig& config,
+                                                 int pairing_offset) {
+  if (config.traffic_patterns_size() > 1) {
+    LOG(INFO)
+        << "The initial template should contain only one traffic pattern, for "
+           "the first NIC pair.";
+    return config;
+  }
+  config = config_utils::GetMultiNicConfigFromTemplate(num_nics, config,
+                                                       pairing_offset);
+  // If `num_threads` sweep parameter is 1, we need to set explicit thread
+  // affinity per pair here.
+  if (config.traffic_patterns(0).has_explicit_traffic()) {
+    SetExplicitThreadAffinityPerPair(config, 1);
+  }
+  return config;
+}
+
 void SetTrafficPatternCnt(proto::LeaderConfig& config, std::string parameter) {
   std::vector<std::string> config_value_pair = absl::StrSplit(parameter, '-');
   int traffic_pattern_cnt;
   CHECK(absl::SimpleAtoi(config_value_pair[1], &traffic_pattern_cnt));
-
+  int initial_traffic_pattern_cnt = config.traffic_patterns_size();
+  int num_threads_per_pattern = traffic_pattern_cnt;
+  bool is_multi_pattern_template = initial_traffic_pattern_cnt > 1;
+  // If the template has multiple traffic patterns, we need to repeat each
+  // traffic pattern for the specified number of threads.
+  if (is_multi_pattern_template) {
+    traffic_pattern_cnt *= initial_traffic_pattern_cnt;
+  }
   config = config_utils::GetConfigWithNumThreads(traffic_pattern_cnt, config);
   // Make thread affinity param (this is for loopback).
   config.clear_explicit_thread_affinity_param();
@@ -317,21 +378,7 @@ void SetTrafficPatternCnt(proto::LeaderConfig& config, std::string parameter) {
       }
     }
   } else {
-    for (int follower_id = 0; follower_id < config.group_size();
-         ++follower_id) {
-      core = 1;
-      for (auto& traffic : config.traffic_patterns()) {
-        auto* added = config.mutable_explicit_thread_affinity_param()
-                          ->add_explicit_thread_affinity_configs();
-        added->set_follower_id(follower_id);
-        added->set_traffic_pattern_id(traffic.global_traffic_id());
-        added->set_cpu_core_id(core);
-        ++core;
-        if (core >= absl::GetFlag(FLAGS_max_cpus)) {
-          core = absl::GetFlag(FLAGS_min_core_id);
-        }
-      }
-    }
+    SetExplicitThreadAffinityPerPair(config, num_threads_per_pattern);
   }
 }
 
@@ -502,7 +549,6 @@ void SetIterations(proto::LeaderConfig& config, std::string parameter) {
   std::vector<std::string> config_value_pair = absl::StrSplit(parameter, '-');
   int64_t iterations;
   CHECK(absl::SimpleAtoi(config_value_pair[1], &iterations));  // Crash OK
-  LOG(INFO) << "Setting Iterations: " << iterations;
 
   for (auto& traffic_pattern : *config.mutable_traffic_patterns()) {
     // Bandwidth traffic and pingpong traffic accepts iterations.

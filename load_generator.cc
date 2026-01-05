@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -38,8 +38,8 @@ LoadGeneratorClock default_clock;
 using LoadParametersCase = proto::PerFollowerTrafficPattern::LoadParametersCase;
 
 absl::StatusOr<std::unique_ptr<LoadGenerator>> CreateLoadGenerator(
-    const proto::PerFollowerTrafficPattern &pattern, int min_wqe_cap,
-    LoadGeneratorClock *clock) {
+    const proto::PerFollowerTrafficPattern& pattern, int min_wqe_cap,
+    LoadGeneratorClock* clock) {
   if (pattern.traffic_type() == proto::TRAFFIC_TYPE_PINGPONG) {
     // In pingpong, we can post closed_loop_max_outstanding receives, but only
     // one OP in flight.
@@ -49,7 +49,7 @@ absl::StatusOr<std::unique_ptr<LoadGenerator>> CreateLoadGenerator(
   }
   switch (pattern.load_parameters_case()) {
     case LoadParametersCase::kOpenLoopParameters: {
-      auto &open_loop_params = pattern.open_loop_parameters();
+      auto& open_loop_params = pattern.open_loop_parameters();
       if (utils::ProtoToDuration(open_loop_params.average_interval()) <=
           absl::ZeroDuration()) {
         return absl::InvalidArgumentError(
@@ -128,7 +128,7 @@ void FixedDelayLoadGenerator::Advance(const int32_t num_posted) {
 }
 
 PoissonArrivalLoadGenerator::PoissonArrivalLoadGenerator(
-    const absl::Duration mean_interval, LoadGeneratorClock *clock)
+    const absl::Duration mean_interval, LoadGeneratorClock* clock)
     : mean_interval_(mean_interval),
       lambda_(1.0 / absl::ToDoubleSeconds(mean_interval)),
       clock_(clock) {
@@ -198,9 +198,9 @@ void ClosedLoopLoadGenerator::Complete(const int32_t num_completed) {
 BarrieredBurstLoadGenerator::BarrieredBurstLoadGenerator(
     const absl::Duration rest_length,
     std::function<void(verbsmarks::proto::BarrierRequest,
-                       verbsmarks::proto::BarrierResponse *)>
-        *barrier_request_func,
-    LoadGeneratorClock *clock)
+                       verbsmarks::proto::BarrierResponse*)>*
+        barrier_request_func,
+    LoadGeneratorClock* clock)
     : rest_length_(rest_length),
       clock_(clock),
       next_post_time_(absl::InfiniteFuture()),
@@ -222,8 +222,8 @@ absl::Time BarrieredBurstLoadGenerator::Start() {
 
 void BarrieredBurstLoadGenerator::BarrierRequester(
     std::function<void(verbsmarks::proto::BarrierRequest,
-                       verbsmarks::proto::BarrierResponse *)>
-        *barrier_request_func) {
+                       verbsmarks::proto::BarrierResponse*)>*
+        barrier_request_func) {
   while (true) {
     mutex_.Lock();
     if (barrier_status_ == BarrierStatus::kFinished) {

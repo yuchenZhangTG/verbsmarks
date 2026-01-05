@@ -25,24 +25,26 @@ See `verbsmarks.md` for a description of the main components of Verbsmarks, and
 the input/output file specifications.
 
 ## Building Verbsmarks
-Verbsmarks can be built using `bazel 7.1.1`. Run from the repository root:
+Ensure `libibverbs` and `libnuma` are installed. Update the `USR_LIB_DIR` path
+in `deps.bzl` if these are installed in a directory other than
+`/usr/lib/x86_64-linux-gnu`.
+
+Verbsmarks can be built using `bazel 8.5.0` and newer. Run from the repository
+root:
 ```
 bazel build verbsmarks_main
 bazel build tools:simple_sweep_main
 ```
 
 ### Build Troubleshooting
-* If Bazel is not available as a native package (e.g., Rocky linux), build it
-  from source, following the directions at https://github.com/bazelbuild/bazel/.
-* If libibverbs is installed in a path other than `/usr/lib/x86_64-linux-gnu`
-  (default for Ubuntu), update the location of libibverbs in `WORKSPACE.bazel`
-  to point to your local installation, for instance:
-  `sed -i 's/\/usr\/lib\/x86_64-linux-gnu/\/usr\/lib64/g' WORKSPACE.bazel`
-* Prevent Bazel from overriding dependency URLs with internal mirrors if you
-  encounter errors downloading dependencies. Run `touch bazel_downloader.cfg`
-  in the project root directory.
+
+* If a recent Bazel version is not available as a native package, install it
+  by following the directions at https://bazel.build/.
+* If libibverbs and libnuma are installed in a path other than
+  `/usr/lib/x86_64-linux-gnu` (default for Ubuntu), update `USR_LIB_DIR` in
+  `deps.bzl` to point to your local installation.
 * Define any needed compiler flags in `.bazelrc`, or specify flags using
-  `bazel build --action_env=BAZEL_CXXOPTS="-std=c++17" verbsmarks_main`.
+  `bazel build --action_env=BAZEL_CXXOPTS="-std=c++17" ...`.
   Verbsmarks must be built with `-std=c++17` or greater.
 
 
@@ -53,8 +55,8 @@ instance. In addition to the LeaderConfig defining the experiment workflow,
 there are a range of runtime flags (see `./verbsmarks_main --help`).
 
 In the `examples` directory, there are many example LeaderConfig files for
-various workloads. To run the experiment by manually launching Verbsmarks processes, use the following
-commands:
+various workloads. To run the experiment by manually launching Verbsmarks
+processes, use the following commands:
 
 1. Run leader on host1
 
@@ -80,7 +82,6 @@ commands:
     --follower_address=${ip_address_host2} --follower_alias=follower1
 ```
 
-
 ## Parameter Sweep Experiments
 Verbsmarks uses the `ExperimentConfig` protobuf to define parameter sweep
 experiments. This protobuf is translated into a series of `LeaderConfig` files
@@ -102,7 +103,6 @@ output directory. Once the sweep outputs are written, the ExperimentConfig and
 base LeaderConfig protos are no longer needed; simply launch `verbsmarks_main`
 with one of the generated LeaderConfigs.
 
-
 ## Example Experiment Configurations
 The `examples` directory contains a range of configurations for various
 workloads and parameter sweep experiments. Inline comments describe the fields
@@ -111,8 +111,9 @@ functionality (in addition to the documentation within `verbsmarks.proto`).
 
 #### Bandwidth-oriented workloads (`examples/bandwidth_sweep/`)
 BandwidthTraffic is a traffic pattern that is optimized to push the NIC further
-by reducing computation during experiments as much as possible. This is suitable for measuring op rate or bandwidth. Below examples are provided
-in this category.
+by reducing computation during experiments as much as possible. This is suitable
+for measuring op rate or bandwidth. Below examples are provided in this
+category.
 
 * `bandwidth_base_config.textpb` 2-node, unidirectional bandwidth workload
   with 4096B WRITE ops.
@@ -141,23 +142,27 @@ Here are examples of latency focused examples.
   and 100 threads.
 
 #### Pingpong workloads (`examples/pingpong_sweep/`)
+
 * `pingpong_base_config.textpb` 2-node pingpong workload with 1B SEND_RECEIVE
   ops.
 * `sweep_pingpong_over_msg_size.textpb` Parameter sweep for 2-node pingpong
   latency, with 1B-2MB op sizes, and SEND_RECEIVE and WRITE op types.
 
 #### Incast, outcast workloads (`examples/incast_outcast/`)
+
 * `incast_5to1_config.textpb` Incast workload with 1000KB WRITE ops from 5
   initiator nodes to 1 target node.
 * `outcast_5to1_config.textpb` Outcast workload with 1000KB WRITE ops from 1
   initiator node to 5 targets.
 
 #### Uniform random workloads (`examples/uniform_random/`)
+
 * `uniform_random_config.textpb` Uniform random traffic with 1 initiator sending
   to 5 total nodes, with mixed 4B READ/WRITE/SEND_RECEIVE ops, with fixed
   arrival distribution (open-loop).
 
 #### Mixed operations workloads (`examples/mixed_ops/`)
+
 * `mixed_op_sizes_config.textpb` 2-node unidirectional traffic with a mixture of
   8B, 1B, and 4KB READ/WRITE operations and open-loop load.
 * `mixed_op_types_config.textpb` 2-node unidirectional traffic with operation

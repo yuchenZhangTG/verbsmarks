@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -61,7 +61,7 @@ VerbsMarksLeaderService::VerbsMarksLeaderService(
 
 void VerbsMarksLeaderService::Shutdown(const absl::Time deadline) {
   {
-    absl::MutexLock lock(&server_shutdown_mutex_);
+    absl::MutexLock lock(server_shutdown_mutex_);
     if (server_shutdown_) {
       return;
     }
@@ -137,7 +137,7 @@ void VerbsMarksLeaderService::CleanupAfterRequest(
   // before finishing this one if the server were not shutdown. That invariant
   // makes sure that rpcs_pending_ hits 0 exactly once.
   {
-    absl::MutexLock lock(&server_shutdown_mutex_);
+    absl::MutexLock lock(server_shutdown_mutex_);
     --rpcs_pending_;
     if (rpcs_pending_ == 0) {
       // Ignore mutants, this only prevents racy shutdown.
@@ -149,7 +149,7 @@ void VerbsMarksLeaderService::CleanupAfterRequest(
 template <typename request_type, typename response_type>
 void VerbsMarksLeaderService::PrepareToAcceptRequest() {
   {
-    absl::MutexLock lock(&server_shutdown_mutex_);
+    absl::MutexLock lock(server_shutdown_mutex_);
     if (server_shutdown_) {
       LOG(INFO) << "Server shutdown, do not request any more.";
       return;

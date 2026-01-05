@@ -69,7 +69,6 @@ static constexpr absl::Duration kDefaultHeartbeatSendInterval =
 // This class is thread compatible.
 class VerbsMarksFollower {
  public:
-  //
   VerbsMarksFollower(
       const std::shared_ptr<grpc::ServerCredentials>& server_credentials,
       int local_port, const absl::string_view local_ip,

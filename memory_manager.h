@@ -19,16 +19,15 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/types/optional.h"
 #include "google/protobuf/repeated_ptr_field.h"
 #include "ibverbs_utils.h"
 #include "infiniband/verbs.h"
+#include "memory_block.h"
 #include "queue_pair.h"
 #include "verbsmarks.pb.h"
 
@@ -38,25 +37,25 @@ namespace verbsmarks {
 // organize the memory resources (i.e., protection domain, memory regions and
 // blocks) that belong to a follower, traffic pattern or queue pair. It stores
 // the ownership of the PD and MRs, as well as memory block addresses and sizes.
-
+//
 // All resources may or may not exist in the same instance. E.g., when the
 // protection domain is to be allocated follower-wide, no traffic pattern or
 // queue pair can own a protection domain.
-
+//
 // This class also provides a series of calls regarding memory block sizes and
 // address for MemoryManager, which needs to calculate the total memory block
 // sizes (to support traffic pattern- or follower-level memory regions) by
 // iterating through queue pairs and to set the offset for each queue pair
 // within the allocated block.
-
+//
 // This class is thread-unsafe, because it is only mutated when MemoryManager
 // initializes resources, is happens during experiment initialization where
 // multithreading is not used.
 class MemoryResources {
  public:
-  absl::Status AllocateProtectionDomain(ibv_context *verbs_context);
+  absl::Status AllocateProtectionDomain(ibv_context* verbs_context);
 
-  ibv_pd *GetProtectionDomain() const { return protection_domain_.get(); }
+  ibv_pd* GetProtectionDomain() const { return protection_domain_.get(); }
   std::uintptr_t GetRecvMemoryAddress() const { return recv_memory_address_; }
   std::uintptr_t GetLocalControlledMemoryAddress() const {
     return local_controlled_memory_address_;
@@ -72,17 +71,17 @@ class MemoryResources {
     return remote_controlled_memory_block_size_;
   }
   const std::vector<
-      std::unique_ptr<ibv_mr, ibverbs_utils::MemoryRegionDeleter>> &
+      std::unique_ptr<ibv_mr, ibverbs_utils::MemoryRegionDeleter>>&
   GetRecvMemoryRegions() const {
     return recv_memory_regions_;
   }
   const std::vector<
-      std::unique_ptr<ibv_mr, ibverbs_utils::MemoryRegionDeleter>> &
+      std::unique_ptr<ibv_mr, ibverbs_utils::MemoryRegionDeleter>>&
   GetLocalControlledMemoryRegions() const {
     return local_controlled_memory_regions_;
   }
   const std::vector<
-      std::unique_ptr<ibv_mr, ibverbs_utils::MemoryRegionDeleter>> &
+      std::unique_ptr<ibv_mr, ibverbs_utils::MemoryRegionDeleter>>&
   GetRemoteControlledMemoryRegions() const {
     return remote_controlled_memory_regions_;
   }
@@ -109,7 +108,7 @@ class MemoryResources {
   // Copies the *_size fields in another instance to the corresponding *_address
   // in this one.
   void CopyMemoryBlockSizesAsAddressesFrom(
-      const MemoryResources &memory_resources) {
+      const MemoryResources& memory_resources) {
     recv_memory_address_ =
         static_cast<std::uintptr_t>(memory_resources.recv_memory_block_size_);
     local_controlled_memory_address_ = static_cast<std::uintptr_t>(
@@ -120,7 +119,7 @@ class MemoryResources {
 
   // Increments *_size fields by the corresponding *_size fields from another
   // instance.
-  void IncrementMemoryBlockSizesFrom(const MemoryResources &memory_resources) {
+  void IncrementMemoryBlockSizesFrom(const MemoryResources& memory_resources) {
     recv_memory_block_size_ += memory_resources.recv_memory_block_size_;
     local_controlled_memory_block_size_ +=
         memory_resources.local_controlled_memory_block_size_;
@@ -130,7 +129,7 @@ class MemoryResources {
 
   // Increments *_address fields by the corresponding *_address fields from
   // another instance.
-  void IncrementMemoryAddressesFrom(const MemoryResources &memory_resources) {
+  void IncrementMemoryAddressesFrom(const MemoryResources& memory_resources) {
     recv_memory_address_ += memory_resources.recv_memory_address_;
     local_controlled_memory_address_ +=
         memory_resources.local_controlled_memory_address_;
@@ -141,7 +140,7 @@ class MemoryResources {
   // Create memory regions according to sizes and addresses in this struct.
   // The protection domain passed in the argument is used instead of the one in
   // this instance , because PD might not be allocated at this level.
-  absl::Status CreateMemoryRegions(ibv_pd *protection_domain,
+  absl::Status CreateMemoryRegions(ibv_pd* protection_domain,
                                    int num_memory_regions);
 
  private:
@@ -166,22 +165,22 @@ class MemoryResources {
 // traffic patterns and queue pairs. Only one instance should be created within
 // a follower, and initialization and queries should happen before an experiment
 // begins.
-
+//
 // This class is thread-unsafe, because resource initialization should only
 // happen during experiment initialization where multithreading is not used.
 class MemoryManager {
  public:
   MemoryManager() = default;
-  MemoryManager(MemoryManager &&) = default;
+  MemoryManager(MemoryManager&&) = default;
   virtual ~MemoryManager() = default;
 
   // Initializes all the managed resources. This function should be called only
   // once for a follower.
   virtual absl::Status InitializeResources(
-      ibv_context *verbs_context,
-      const proto::MemoryResourcePolicy &memory_resource_policy,
-      const google::protobuf::RepeatedPtrField<proto::PerFollowerTrafficPattern>
-          &per_follower_traffic_patterns);
+      ibv_context* verbs_context,
+      const proto::MemoryResourcePolicy& memory_resource_policy,
+      const google::protobuf::RepeatedPtrField<
+          proto::PerFollowerTrafficPattern>& per_follower_traffic_patterns);
 
   // Find out protection domain, memory regions and memory blocks corresponding
   // to a queue pair.
@@ -191,7 +190,7 @@ class MemoryManager {
 
   // Gets per-queue pair memory resources struct.
   // Returns nullptr if it is not found.
-  const MemoryResources *GetMemoryResources(int32_t traffic_pattern_id,
+  const MemoryResources* GetMemoryResources(int32_t traffic_pattern_id,
                                             int32_t queue_pair_id) const {
     if (!queue_pair_resources_.contains(traffic_pattern_id) ||
         !queue_pair_resources_.at(traffic_pattern_id).contains(queue_pair_id)) {
@@ -202,7 +201,7 @@ class MemoryManager {
 
   // Gets per-traffic pattern memory resources struct.
   // Returns nullptr if it is not found.
-  const MemoryResources *GetMemoryResources(int32_t traffic_pattern_id) const {
+  const MemoryResources* GetMemoryResources(int32_t traffic_pattern_id) const {
     if (!traffic_pattern_resources_.contains(traffic_pattern_id)) {
       return nullptr;
     }
@@ -210,33 +209,32 @@ class MemoryManager {
   }
 
   // Gets per-follower memory resources struct. Always returns a valid pointer.
-  const MemoryResources *GetMemoryResources() const {
+  const MemoryResources* GetMemoryResources() const {
     return &follower_resources_;
   }
 
-  const std::vector<uint8_t> *GetRecvMemoryBlock() const {
-    if (!recv_memory_block_.has_value()) {
-      return nullptr;
-    }
-    return &recv_memory_block_.value();
+  void* GetRecvBuffer() { return recv_memory_block_.Data(); }
+
+  size_t GetRecvBufferSize() const { return recv_memory_block_.Size(); }
+
+  void* GetLocalControlledBuffer() {
+    return local_controlled_memory_block_.Data();
   }
 
-  const std::vector<uint8_t> *GetLocalControlledMemoryBlock() const {
-    if (!local_controlled_memory_block_.has_value()) {
-      return nullptr;
-    }
-    return &local_controlled_memory_block_.value();
+  size_t GetLocalControlledBufferSize() const {
+    return local_controlled_memory_block_.Size();
   }
 
-  const std::vector<uint8_t> *GetRemoteControlledMemoryBlock() const {
-    if (!remote_controlled_memory_block_.has_value()) {
-      return nullptr;
-    }
-    return &remote_controlled_memory_block_.value();
+  void* GetRemoteControlledBuffer() {
+    return remote_controlled_memory_block_.Data();
+  }
+
+  size_t GetRemoteControlledBufferSize() const {
+    return remote_controlled_memory_block_.Size();
   }
 
  private:
-  ibv_context *verbs_context_;
+  ibv_context* verbs_context_;
   proto::MemoryResourcePolicy memory_resource_policy_;
 
   // Below are follower-, traffic pattern- and queue pair-level resources. All
@@ -251,11 +249,9 @@ class MemoryManager {
   absl::flat_hash_map<int32_t, absl::flat_hash_map<int32_t, MemoryResources>>
       queue_pair_resources_;
 
-  std::optional<std::vector<uint8_t>> recv_memory_block_ = std::nullopt;
-  std::optional<std::vector<uint8_t>> local_controlled_memory_block_ =
-      std::nullopt;
-  std::optional<std::vector<uint8_t>> remote_controlled_memory_block_ =
-      std::nullopt;
+  MemoryBlock recv_memory_block_;
+  MemoryBlock local_controlled_memory_block_;
+  MemoryBlock remote_controlled_memory_block_;
 };
 
 }  // namespace verbsmarks

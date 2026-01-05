@@ -30,6 +30,14 @@ namespace config_utils {
 // which all operations are 32B reads.
 proto::LeaderConfig GetThroughputConfig();
 
+// Returns a modified version of `config` that has `num_nics` traffic patterns.
+// The first traffic pattern is duplicated `num_nics` times and each new traffic
+// pattern has a unique global traffic id. The initiator and target of each
+// traffic pattern is set based on the pairing offset.
+proto::LeaderConfig GetMultiNicConfigFromTemplate(int num_nics,
+                                                  proto::LeaderConfig config,
+                                                  int pairing_offset);
+
 // Returns the config in `GetThroughputConfig`, with the size of all operations
 // changed to `op_bytes`.
 proto::LeaderConfig GetThroughputConfigWithSize(double op_bytes);

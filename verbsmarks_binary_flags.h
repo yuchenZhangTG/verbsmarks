@@ -31,6 +31,7 @@ ABSL_DECLARE_FLAG(std::string, follower_address);
 ABSL_DECLARE_FLAG(std::string, follower_alias);
 ABSL_DECLARE_FLAG(bool, is_leader);
 ABSL_DECLARE_FLAG(std::string, grpc_creds);
+ABSL_DECLARE_FLAG(int, mem_bind_numa_node);
 ABSL_DECLARE_FLAG(int32_t, qp_memory_space_slots);
 ABSL_DECLARE_FLAG(int32_t, max_dest_rd_atomic);
 ABSL_DECLARE_FLAG(int32_t, max_rd_atomic);

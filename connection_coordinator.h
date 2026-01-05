@@ -44,7 +44,7 @@ namespace verbsmarks {
 class ConnectionCoordinatorServer {
  public:
   ConnectionCoordinatorServer(
-      const std::shared_ptr<grpc::ServerCredentials> &credentials,
+      const std::shared_ptr<grpc::ServerCredentials>& credentials,
       absl::string_view address,
       std::unique_ptr<proto::ConnectionCoordinator::Service> service);
 
@@ -58,8 +58,8 @@ class ConnectionCoordinatorServer {
   void RunInThread();
 
   // ConnectionCoordinatorServer is moveable but not copyable
-  ConnectionCoordinatorServer(ConnectionCoordinatorServer &&other) = default;
-  ConnectionCoordinatorServer &operator=(ConnectionCoordinatorServer &&other) =
+  ConnectionCoordinatorServer(ConnectionCoordinatorServer&& other) = default;
+  ConnectionCoordinatorServer& operator=(ConnectionCoordinatorServer&& other) =
       default;
 
  private:
@@ -84,12 +84,12 @@ class ConnectionCoordinatorClient {
   // will be populated with the response from the server. The status is returned
   // from the server.
   grpc::Status GetQueuePairAttributes(
-      const proto::QueuePairAttributesRequest &request,
-      proto::QueuePairAttributesResponse &response);
+      const proto::QueuePairAttributesRequest& request,
+      proto::QueuePairAttributesResponse& response);
 
   // ConnectionCoordinatorClient is moveable but not copyable
-  ConnectionCoordinatorClient(ConnectionCoordinatorClient &&other) = default;
-  ConnectionCoordinatorClient &operator=(ConnectionCoordinatorClient &&other) =
+  ConnectionCoordinatorClient(ConnectionCoordinatorClient&& other) = default;
+  ConnectionCoordinatorClient& operator=(ConnectionCoordinatorClient&& other) =
       default;
 
  private:
@@ -103,7 +103,7 @@ class ConnectionCoordinatorClient {
 class RemoteQueuePairAttributesFetcher {
  public:
   explicit RemoteQueuePairAttributesFetcher(
-      const absl::flat_hash_map<int32_t, proto::Follower> *followers)
+      const absl::flat_hash_map<int32_t, proto::Follower>* followers)
       : followers_(*followers) {}
 
   // Fetches queue pair attributes from the provided peer, using `request`. This
@@ -111,17 +111,17 @@ class RemoteQueuePairAttributesFetcher {
   // not exist or if the request fails.
   absl::StatusOr<const proto::QueuePairAttributesResponse>
   GetQueuePairAttributes(int32_t peer_id,
-                         const proto::QueuePairAttributesRequest &request,
+                         const proto::QueuePairAttributesRequest& request,
                          std::shared_ptr<grpc::ChannelCredentials> creds);
 
   // RemoteQueuePairAttributesFetcher is moveable but not copyable
-  RemoteQueuePairAttributesFetcher(RemoteQueuePairAttributesFetcher &&other) =
+  RemoteQueuePairAttributesFetcher(RemoteQueuePairAttributesFetcher&& other) =
       default;
-  RemoteQueuePairAttributesFetcher &operator=(
-      RemoteQueuePairAttributesFetcher &&other) = default;
+  RemoteQueuePairAttributesFetcher& operator=(
+      RemoteQueuePairAttributesFetcher&& other) = default;
 
  private:
-  const absl::flat_hash_map<int32_t, proto::Follower> &followers_;
+  const absl::flat_hash_map<int32_t, proto::Follower>& followers_;
 
   absl::Mutex map_mutex_;
   // Map from peer id to connection.

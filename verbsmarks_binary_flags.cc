@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -45,14 +45,17 @@ ABSL_FLAG(std::string, grpc_creds, "GRPC_CRED_INSECURE",
           "The gRPC credentials used for verbsmarks. Must be one of: "
           "GRPC_CRED_SSL, GRPC_CRED_LOCAL, or GRPC_CRED_INSECURE");
 
+ABSL_FLAG(int, mem_bind_numa_node, -1,
+          "NUMA node for memory allocation. Binding skipped if <0.");
+
 ABSL_FLAG(int32_t, qp_memory_space_slots, 1,
           "The total memory space allocated per QP is max_op_size * "
           "qp_memory_space_slots.");
 
-ABSL_FLAG(int32_t, max_dest_rd_atomic, 512,
+ABSL_FLAG(int32_t, max_dest_rd_atomic, 0,
           "The number of responder resource for reads/atomic at dest (IRD).");
 
-ABSL_FLAG(int32_t, max_rd_atomic, 256,
+ABSL_FLAG(int32_t, max_rd_atomic, 0,
           "The number outstanding reads/atomics handled at initiator (ORD).");
 
 ABSL_FLAG(std::string, result_file_name, "",
@@ -72,6 +75,6 @@ ABSL_FLAG(std::string, periodic_result_file_name_template, "",
           "substituted for $0 if contained in the string. No effect unless "
           "enable_heartbeats is set.");
 
-ABSL_FLAG(bool, ignore_outstanding_ops_at_cutoff, false,
+ABSL_FLAG(bool, ignore_outstanding_ops_at_cutoff, true,
           "Do not error out on any outstanding ops after the hard cutoff time "
           "(potentially benign for openloop)");

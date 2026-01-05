@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -56,7 +56,6 @@ absl::Status TranslateParticipants(const proto::ParticipantList& followers,
       return absl::InvalidArgumentError("group size smaller than any_subset");
     }
     auto* specific_followers = participants->mutable_specific_followers();
-    //
     for (int i = 0; i < subset_num; ++i) {
       specific_followers->add_participant(followers.participant(i));
     }
@@ -499,7 +498,6 @@ absl::Status ExplicitTrafficPatternTranslator::FillTrafficPattern(
   for (int i = 0; i < global_.explicit_traffic().flows_size(); ++i) {
     const proto::ExplicitTraffic::Flow& flow =
         global_.explicit_traffic().flows().at(i);
-    //
     int repeat = 1;
     if (flow.repeat() > 0) {
       repeat = flow.repeat();
@@ -574,12 +572,7 @@ absl::Status PingPongTrafficPatternTranslator::FillTrafficPattern(
       proto::CompletionQueuePolicy::COMPLETION_QUEUE_POLICY_SHARED_CQ);
 
   per_follower_traffic->set_use_event(traffic.use_event());
-
   per_follower_traffic->set_iterations(traffic.iterations());
-  // By default, initiators start posting after 2 seconds.
-  //
-  per_follower_traffic->mutable_initial_delay_before_posting()->set_seconds(2);
-
   per_follower_traffic->mutable_peers()->add_participant(peer);
   proto::QueuePairConfig* queue_pair = per_follower_traffic->add_queue_pairs();
   queue_pair->set_connection_type(global_.connection_type());

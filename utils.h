@@ -34,6 +34,7 @@
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/flags/declare.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -49,20 +50,16 @@
 #include "grpcpp/security/server_credentials.h"
 #include "verbsmarks.pb.h"
 
+ABSL_DECLARE_FLAG(int32_t, grpc_timeout_seconds);
+ABSL_DECLARE_FLAG(int32_t, grpc_long_timeout_seconds);
+
 namespace verbsmarks {
 namespace utils {
 
 // The number of nanoseconds in a second.
 constexpr int64_t kSecondInNanoseconds = 1e9;
 
-// Short deadline for timely requests (e.g., leader health check)
-constexpr std::chrono::seconds kGrpcRequestTimeout(30);
-
-// Longer deadline for experiment start/finish RPCs, which may be necessary for
-// large-scale experiments.
-constexpr std::chrono::seconds kGrpcLongRequestTimeout(300);
-
-// After the experiment time is over, terminate after this time if it failes to
+// After the experiment time is over, terminate after this time if it fails to
 // drain the completion queue.
 constexpr absl::Duration kHardCutoffAfterExperiment = absl::Seconds(30);
 
@@ -209,8 +206,12 @@ class ThreadPool {
   void Run() {
     while (true) {
       std::function<void()> task;
+      const auto condition = [this]()
+                                 ABSL_SHARED_LOCKS_REQUIRED(mutex_) -> bool {
+        return !tasks_.empty() || stop_;
+      };
       {
-        absl::MutexLock lock(&mutex_);
+        absl::MutexLock lock(&mutex_, absl::Condition(&condition));
         if (stop_) {
           break;
         }
@@ -229,12 +230,13 @@ class ThreadPool {
   // Waits until all the tasks are done. Users should call after all tasks are
   // added. Once all the tasks are done, it will set the `stop_` flag to true.
   void Wait() {
+    const auto condition = [this]() ABSL_SHARED_LOCKS_REQUIRED(mutex_) -> bool {
+      return tasks_in_progress_ == 0;
+    };
     while (true) {
-      absl::MutexLock lock(&mutex_);
-      if (tasks_in_progress_ == 0) {
-        stop_ = true;
-        return;
-      }
+      absl::MutexLock lock(&mutex_, absl::Condition(&condition));
+      stop_ = true;
+      return;
     }
   }
 

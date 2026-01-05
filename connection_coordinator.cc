@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/flags/flag.h"
 #include "absl/log/log.h"
 #include "absl/meta/type_traits.h"
 #include "absl/status/status.h"
@@ -45,7 +46,7 @@
 namespace verbsmarks {
 
 ConnectionCoordinatorServer::ConnectionCoordinatorServer(
-    const std::shared_ptr<grpc::ServerCredentials> &credentials,
+    const std::shared_ptr<grpc::ServerCredentials>& credentials,
     const absl::string_view address,
     std::unique_ptr<proto::ConnectionCoordinator::Service> service)
     : address_(address),
@@ -89,19 +90,20 @@ ConnectionCoordinatorClient::ConnectionCoordinatorClient(
           grpc::CreateChannel(std::string(server_address), creds))) {}
 
 grpc::Status ConnectionCoordinatorClient::GetQueuePairAttributes(
-    const proto::QueuePairAttributesRequest &request,
-    proto::QueuePairAttributesResponse &response) {
+    const proto::QueuePairAttributesRequest& request,
+    proto::QueuePairAttributesResponse& response) {
   grpc::ClientContext context;
-  // Timeout if can not connect to the peer in 5s. It is likely that the peer
+  // Timeout if can not connect to the peer. It is likely that the peer
   // is down due to some error.
-  context.set_deadline(std::chrono::system_clock::now() +
-                       utils::kGrpcRequestTimeout);
+  context.set_deadline(
+      std::chrono::system_clock::now() +
+      std::chrono::seconds(absl::GetFlag(FLAGS_grpc_timeout_seconds)));
   return stub_->GetQueuePairAttributes(&context, request, &response);
 }
 
 absl::StatusOr<const proto::QueuePairAttributesResponse>
 RemoteQueuePairAttributesFetcher::GetQueuePairAttributes(
-    const int32_t peer_id, const proto::QueuePairAttributesRequest &request,
+    const int32_t peer_id, const proto::QueuePairAttributesRequest& request,
     std::shared_ptr<grpc::ChannelCredentials> creds) {
   auto follower_it = followers_.find(peer_id);
   if (follower_it == followers_.end()) {
@@ -109,7 +111,7 @@ RemoteQueuePairAttributesFetcher::GetQueuePairAttributes(
         "Peer id ", peer_id, " does not correspond to a valid follower."));
   }
 
-  ConnectionCoordinatorClient *client;
+  ConnectionCoordinatorClient* client;
   {
     absl::MutexLock lock(&map_mutex_);
     auto it = clients_.try_emplace(

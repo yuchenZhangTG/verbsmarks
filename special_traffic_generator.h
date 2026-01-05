@@ -42,7 +42,7 @@ class SpecialTrafficGenerator {
  public:
   explicit SpecialTrafficGenerator(
       proto::PerFollowerTrafficPattern traffic_pattern,
-      proto::PerTrafficResult *summary)
+      proto::PerTrafficResult* summary)
       : traffic_pattern_(traffic_pattern),
         should_trace_(traffic_pattern.metrics_collection().enable_tracing()),
         warm_up_(
@@ -79,7 +79,7 @@ class SpecialTrafficGenerator {
   int64_t iterations_;
   int32_t op_size_;
   folly::TDigest latency_tdigest_;
-  proto::PerTrafficResult *summary_;
+  proto::PerTrafficResult* summary_;
   absl::Notification abort_;
 };
 
@@ -118,12 +118,13 @@ struct PingPongInfo {
 class WritePingPongTraffic : public SpecialTrafficGenerator {
  public:
   explicit WritePingPongTraffic(
-      proto::PerFollowerTrafficPattern traffic_pattern, QueuePair *queue_pair,
-      CompletionQueueManager *completion_queue_manager,
-      proto::PerTrafficResult *summary)
+      proto::PerFollowerTrafficPattern traffic_pattern, QueuePair* queue_pair,
+      CompletionQueueManager* completion_queue_manager,
+      proto::PerTrafficResult* summary)
       : SpecialTrafficGenerator(traffic_pattern, summary),
         queue_pair_(queue_pair),
         completion_queue_manager_(completion_queue_manager) {
+    latency_.resize(kTracingLatencyBufferSize);
     for (int i = 0; i < kTracingLatencyBufferSize; ++i) {
       detail_time_[i] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     }
@@ -138,13 +139,13 @@ class WritePingPongTraffic : public SpecialTrafficGenerator {
   uint64_t ping_address_local_;
   uint64_t pong_address_;
   // Send ping here.
-  uint64_t *ping_ptr_;
+  uint64_t* ping_ptr_;
 
   std::array<PingPongInfo, kTracingLatencyBufferSize> detail_time_;
   std::vector<double> latency_;
   // PingPong uses only one queue pair.
-  QueuePair *queue_pair_;
-  CompletionQueueManager *completion_queue_manager_;
+  QueuePair* queue_pair_;
+  CompletionQueueManager* completion_queue_manager_;
 };
 
 // Generates a pingpong traffic using SEND / RECEIVE, either polling or
@@ -153,14 +154,14 @@ class WritePingPongTraffic : public SpecialTrafficGenerator {
 class SendPingPongTraffic : public SpecialTrafficGenerator {
  public:
   explicit SendPingPongTraffic(proto::PerFollowerTrafficPattern traffic_pattern,
-                               QueuePair *queue_pair,
-                               CompletionQueueManager *completion_queue_manager,
-                               proto::PerTrafficResult *summary)
+                               QueuePair* queue_pair,
+                               CompletionQueueManager* completion_queue_manager,
+                               proto::PerTrafficResult* summary)
       : SpecialTrafficGenerator(traffic_pattern, summary),
         queue_pair_(queue_pair),
         completion_queue_manager_(completion_queue_manager),
-        skip_latency_stats_(
-            traffic_pattern.pingpong_traffic().skip_latency_stats()) {
+        sample_latency_(traffic_pattern.pingpong_traffic().sample_latency()) {
+    latency_.resize(kTracingLatencyBufferSize);
     for (int i = 0; i < kTracingLatencyBufferSize; ++i) {
       detail_time_[i] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     }
@@ -172,20 +173,21 @@ class SendPingPongTraffic : public SpecialTrafficGenerator {
  private:
   absl::Status RunInitiator();
   absl::Status RunTarget();
-  absl::Status Pong(int i, PingPongInfo &info, bool send_completed = false);
+  absl::Status Pong(int i, PingPongInfo& info, bool send_completed = false);
 
   uint64_t ping_address_;
   uint64_t pong_address_;
 
   // Easy data access.
-  uint8_t *ping_ptr_;
+  uint8_t* ping_ptr_;
   std::array<PingPongInfo, kTracingLatencyBufferSize> detail_time_;
   std::vector<double> latency_;
   int prepost_;
   // PingPong uses only one queue pair.
-  QueuePair *queue_pair_;
-  CompletionQueueManager *completion_queue_manager_;
-  bool skip_latency_stats_;
+  QueuePair* queue_pair_;
+  CompletionQueueManager* completion_queue_manager_;
+  bool sample_latency_;
+  int total_latency_count_;
 };
 
 // BandwidthTraffic is optimized to avoid computations during the experiment as
@@ -198,9 +200,9 @@ class SendPingPongTraffic : public SpecialTrafficGenerator {
 class BandwidthTraffic : public SpecialTrafficGenerator {
  public:
   BandwidthTraffic(proto::PerFollowerTrafficPattern traffic_pattern,
-                   QueuePair *queue_pair,
-                   CompletionQueueManager *completion_queue_manager,
-                   proto::PerTrafficResult *summary)
+                   QueuePair* queue_pair,
+                   CompletionQueueManager* completion_queue_manager,
+                   proto::PerTrafficResult* summary)
       : SpecialTrafficGenerator(traffic_pattern, summary),
         queue_pair_(queue_pair),
         completion_queue_manager_(completion_queue_manager) {}
@@ -213,17 +215,18 @@ class BandwidthTraffic : public SpecialTrafficGenerator {
 
   // Track the time sent and # of work requests in a batch.
   struct BatchTracker {
-    ibv_send_wr *work_request_ptr;
+    int64_t signaled_wr_id;
+    ibv_send_wr* work_request_ptr;
     int cnt;
     uint64_t time_sent;
-    struct BatchTracker *next;
+    struct BatchTracker* next;
   };
 
  private:
   // Send traffic needs the target to repost recv buffers when recv buffer
   // consumed. Use a separate function for efficiency.
   absl::Status RunSend();
-  absl::Status Finish(uint64_t outstanding, int k, uint64_t begin,
+  absl::Status Finish(uint64_t outstanding, int k, uint64_t duration_ns,
                       uint64_t total_completed, uint64_t total_received,
                       uint64_t num_hit_outstanding);
   int batch_size_;
@@ -233,18 +236,16 @@ class BandwidthTraffic : public SpecialTrafficGenerator {
   std::vector<ibv_sge> scatter_gather_entries_;
   std::vector<ibv_recv_wr> recv_work_requests_;
   std::vector<ibv_sge> recv_scatter_gather_entries_;
-  // Store bandwidth_trackers.
   std::vector<struct BatchTracker> batch_trackers_;
-  // Mapped by wr_id of the first work item for fast reverse lookup.
-  absl::flat_hash_map<int, struct BatchTracker *> tracker_finder_;
-  absl::flat_hash_map<int, struct ibv_recv_wr *> recv_wr_finder_;
-  struct BatchTracker *next_batch_;
+  // The first wr_id of send work requests, used for batch tracker lookup.
+  int send_wr_id_base_;
+  struct BatchTracker* next_batch_;
   std::vector<double> latency_;
   // Bandwidth traffic uses only one op code.
   ibv_wr_opcode ibv_opcode_;
   // Bandwidth traffic uses only one queue pair per traffic pattern.
-  QueuePair *queue_pair_;
-  CompletionQueueManager *completion_queue_manager_;
+  QueuePair* queue_pair_;
+  CompletionQueueManager* completion_queue_manager_;
 };
 
 }  // namespace verbsmarks

@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,6 +20,7 @@
 #include <sys/types.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <ios>
@@ -46,6 +47,13 @@
 #include "grpcpp/security/server_credentials.h"
 #include "verbsmarks.pb.h"
 #include "verbsmarks_binary_flags.h"
+
+ABSL_FLAG(int32_t, grpc_timeout_seconds, 60,
+          "Short deadline for timely requests (e.g., leader health check).");
+
+ABSL_FLAG(int32_t, grpc_long_timeout_seconds, 300,
+          "Longer deadline for experiment start/finish RPCs, which may be "
+          "necessary for large-scale experiments.");
 
 namespace verbsmarks {
 namespace utils {
@@ -170,6 +178,8 @@ proto::LatencyResult LatencyTdigestToProto(const folly::TDigest& tdigest) {
                          *proto.mutable_p9999_latency());
   utils::DurationToProto(absl::Nanoseconds(tdigest.min()),
                          *proto.mutable_min_latency());
+  utils::DurationToProto(absl::Nanoseconds(tdigest.max()),
+                         *proto.mutable_max_latency());
   return proto;
 }
 

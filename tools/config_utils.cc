@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -95,9 +95,73 @@ void ModifyInlineThreshold(int inline_threshold, proto::LeaderConfig& config) {
   }
 }
 
+proto::LeaderConfig GetMultiNicConfigFromTemplate(int num_nics_per_host,
+                                                  proto::LeaderConfig config,
+                                                  int pairing_offset) {
+  if (num_nics_per_host <= 1) {
+    LOG(ERROR) << "Num of nics on each host is 1 or less, returning unmodified "
+                  "config.";
+    return config;
+  }
+  proto::LeaderConfig multinic_config = config;
+
+  // For explicit traffic, we add flows for each pair of nics. The first traffic
+  // pattern in the template is used to determine the type of traffic to
+  // generate.
+
+  // support num_hosts = 2.
+  if (config.traffic_patterns(0).has_explicit_traffic()) {
+    multinic_config.mutable_traffic_patterns(0)->clear_explicit_traffic();
+    multinic_config.set_group_size(num_nics_per_host * 2);
+    for (int i = 0; i < num_nics_per_host * 2; i += 2) {
+      auto* new_flow = multinic_config.mutable_traffic_patterns(0)
+                           ->mutable_explicit_traffic()
+                           ->add_flows();
+      new_flow->set_initiator(i);
+      new_flow->set_target((i + pairing_offset + 1) % (num_nics_per_host * 2));
+    }
+
+    return multinic_config;
+  }
+
+  // For bandwidth and pingpong traffic, we add a new traffic pattern for each
+  // pair of nics, and set the participants to the pair of nics.
+  int global_traffic_id = 2;
+  for (int i = 2; i < num_nics_per_host * 2; i += 2) {
+    // Skip the first traffic pattern as it is already set in the base config.
+    verbsmarks::proto::GlobalTrafficPattern* new_pattern =
+        multinic_config.add_traffic_patterns();
+    *new_pattern = config.traffic_patterns(0);
+    new_pattern->set_global_traffic_id(global_traffic_id++);
+    new_pattern->mutable_participants()
+        ->mutable_specific_followers()
+        ->clear_participant();
+    new_pattern->mutable_participants()
+        ->mutable_specific_followers()
+        ->add_participant(i);
+    new_pattern->mutable_participants()
+        ->mutable_specific_followers()
+        ->add_participant((i + pairing_offset + 1) % (num_nics_per_host * 2));
+    if (new_pattern->has_bandwidth_traffic()) {
+      auto mutable_traffic = new_pattern->mutable_bandwidth_traffic();
+      mutable_traffic->set_initiator(i);
+      mutable_traffic->set_target((i + pairing_offset + 1) %
+                                  (num_nics_per_host * 2));
+    } else if (new_pattern->has_pingpong_traffic()) {
+      auto mutable_traffic = new_pattern->mutable_pingpong_traffic();
+      mutable_traffic->set_initiator(i);
+      mutable_traffic->set_target((i + pairing_offset + 1) %
+                                  (num_nics_per_host * 2));
+    }
+  }
+
+  return multinic_config;
+}
+
 proto::LeaderConfig GetConfigWithNumThreads(const int num_threads,
                                             proto::LeaderConfig config) {
   int num_existing_threads = config.traffic_patterns_size();
+  int num_initial_traffic_pattern_count = num_existing_threads;
   if (num_threads <= 0 || num_existing_threads == 0) {
     return config;
   }
@@ -106,15 +170,22 @@ proto::LeaderConfig GetConfigWithNumThreads(const int num_threads,
     config.mutable_traffic_patterns()->DeleteSubrange(
         num_threads, num_existing_threads - num_threads);
   } else {
+    int traffic_pattern_id = 0;
     while (num_existing_threads < num_threads) {
-      const int32_t id =
+      const int32_t new_traffic_pattern_id =
           config.traffic_patterns(config.traffic_patterns_size() - 1)
               .global_traffic_id() +
           1;
       verbsmarks::proto::GlobalTrafficPattern* new_traffic_pattern =
           config.add_traffic_patterns();
-      *new_traffic_pattern = config.traffic_patterns(0);
-      new_traffic_pattern->set_global_traffic_id(id);
+      // To support non-explicit traffic patterns (e.g. bw/pingpong) with
+      // multiple NIC pairs and multiple threads for each NIC pair, we need to
+      // cycle through the initial traffic patterns (if
+      // num_initial_traffic_pattern_count > 1).
+      *new_traffic_pattern = config.traffic_patterns(
+          traffic_pattern_id % num_initial_traffic_pattern_count);
+      new_traffic_pattern->set_global_traffic_id(new_traffic_pattern_id);
+      ++traffic_pattern_id;
       ++num_existing_threads;
     }
   }
@@ -151,12 +222,18 @@ void ApplyOpRatio(double write_ratio, double read_ratio, double sendrecv_ratio,
 
 void ApplyQpNum(proto::ExplicitTraffic* explicit_traffic, int qp_num) {
   // Apply QP num as needed.
-  auto flow = explicit_traffic->flows(0);
+  std::vector<proto::ExplicitTraffic::Flow> flows;
+  for (const auto& flow : explicit_traffic->flows()) {
+    flows.push_back(flow);
+  }
+  // For each flow, create qp_num copies.
   explicit_traffic->clear_flows();
-  for (int i = 0; i < qp_num; ++i) {
-    auto* new_flow = explicit_traffic->add_flows();
-    new_flow->set_initiator(flow.initiator());
-    new_flow->set_target(flow.target());
+  for (const auto& flow : flows) {
+    for (int i = 0; i < qp_num; ++i) {
+      auto* new_flow = explicit_traffic->add_flows();
+      new_flow->set_initiator(flow.initiator());
+      new_flow->set_target(flow.target());
+    }
   }
 }
 

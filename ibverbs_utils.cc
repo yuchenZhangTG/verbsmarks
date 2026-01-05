@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -48,9 +48,21 @@ ABSL_FLAG(bool, validate_device_info, true,
           "during device open.");
 ABSL_FLAG(int, ibverb_gid_override, kGidOverrideInvalid,
           "If set to a valid value, force use this GID.");
+ABSL_FLAG(bool, linklocal_invalid, true,
+          "If true, link local gid addresses will be considered invalid.");
+ABSL_FLAG(bool, skip_null_gid, true,
+          "If set to true, skip GIDs with lower 8 bytes being zero.");
 
 namespace verbsmarks {
 namespace ibverbs_utils {
+
+static bool is_null_gid(union ibv_gid* gid) {
+  if (gid->raw[8] | gid->raw[9] | gid->raw[10] | gid->raw[11] | gid->raw[12] |
+      gid->raw[13] | gid->raw[14] | gid->raw[15]) {
+    return false;
+  }
+  return true;
+}
 
 bool HasDevice() {
   ibv_device** devices = nullptr;
@@ -372,6 +384,7 @@ absl::StatusOr<LocalIbverbsAddress> GetLocalAddress(ibv_context* context) {
     // infinite loop, cap it at UINT8_MAX.
     uint8_t max_gid_index =
         (port_attr.gid_tbl_len > UINT8_MAX) ? UINT8_MAX : port_attr.gid_tbl_len;
+    bool linklocal_invalid = absl::GetFlag(FLAGS_linklocal_invalid);
     for (uint8_t gid_index = 0; gid_index < max_gid_index; ++gid_index) {
       DLOG(INFO) << "ibv_query_gid " << int(gid_index);
       if (int query_result = ibv_query_gid(context, port_idx, gid_index, &gid);
@@ -382,10 +395,23 @@ absl::StatusOr<LocalIbverbsAddress> GetLocalAddress(ibv_context* context) {
 
       in6_addr addr;
       memcpy(&addr, gid.raw, sizeof(addr));
+      bool is_linklocal = linklocal_invalid && IN6_IS_ADDR_LINKLOCAL(&addr);
       // Can't use this IP address.
-      if (IN6_IS_ADDR_LINKLOCAL(&addr) || IN6_IS_ADDR_UNSPECIFIED(&addr) ||
+      if (is_linklocal || IN6_IS_ADDR_UNSPECIFIED(&addr) ||
           IN6_IS_ADDR_LOOPBACK(&addr)) {
         LOG(INFO) << "A local ipv6 gid: " << int(gid_index)
+                  << " found. Will prefer other gid if exists.";
+        invalid_address.emplace(
+            LocalIbverbsAddress{.port = port_idx,
+                                .mtu = active_mtu,
+                                .gid = gid,
+                                .gid_index = gid_index,
+                                .ip_addr = IpToString(&addr)});
+        continue;
+      }
+
+      if (absl::GetFlag(FLAGS_skip_null_gid) && is_null_gid(&gid)) {
+        LOG(INFO) << "A null gid: " << int(gid_index)
                   << " found. Will prefer other gid if exists.";
         invalid_address.emplace(
             LocalIbverbsAddress{.port = port_idx,

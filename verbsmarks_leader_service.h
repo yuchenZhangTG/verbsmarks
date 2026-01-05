@@ -57,7 +57,6 @@ class VerbsMarksLeaderService
 
   // Builds and starts the server, and start the completion queue. This call is
   // non-blocking.
-  //
   void Start();
 
   // Returns true if the leader is finished a cycle of experiment.
@@ -70,7 +69,7 @@ class VerbsMarksLeaderService
   // method required to be requested and the function that the leader needs to
   // execute, all the messages require the same process. Therefore we provide
   // templatized methods.
-
+  //
   //  - PrepareToAcceptRequest: provisions resource and request an RPC to gRPC
   //  runtime. It calls RequestRpc which will request different RPC depending on
   //  the message type and register ProcessResponse to handle the response once

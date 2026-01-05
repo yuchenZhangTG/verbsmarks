@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,6 +32,7 @@
 #include "queue_pair.h"
 #include "utils.h"
 #include "verbsmarks.pb.h"
+#include "verbsmarks_binary_flags.h"
 
 ABSL_FLAG(int, bandwidth_timeout_sec, 3600,
           "If the bandwidth test doesn't finish in this time, fail the test. "
@@ -49,7 +50,6 @@ absl::Status WritePingPongTraffic::Prepare() {
   // Set initial value.
   *ping_ptr_ = 0;
   *(reinterpret_cast<uint64_t*>(pong_address_)) = 0;
-  latency_.resize(kTracingLatencyBufferSize);
   return absl::OkStatus();
 }
 
@@ -68,12 +68,6 @@ absl::Status SendPingPongTraffic::Prepare() {
         !status.ok()) {
       return status.status();
     }
-  }
-  if (skip_latency_stats_) {
-    // In this case we store only the latest singular latency sample.
-    latency_.resize(1);
-  } else {
-    latency_.resize(kTracingLatencyBufferSize);
   }
 
   return absl::OkStatus();
@@ -124,7 +118,7 @@ absl::Status WritePingPongTraffic::RunInitiator() {
             ping_address_local_, op_size_, i, ping_address_remote_);
         !status_or_times.ok()) {
       ret_status = status_or_times.status();
-      LOG(ERROR) << "Initiator failed to post pong: "
+      LOG(ERROR) << "Initiator failed to post ping: "
                  << status_or_times.status() << " after: " << total;
       break;
     } else {
@@ -135,7 +129,7 @@ absl::Status WritePingPongTraffic::RunInitiator() {
     auto status_or_completion = completion_queue_manager_->PollUntilTimeout();
     if (!status_or_completion.ok()) {
       ret_status = status_or_completion.status();
-      LOG(ERROR) << "Initiator failed to clear pong: " << ret_status;
+      LOG(ERROR) << "Initiator failed to clear ping: " << ret_status;
       break;
     } else {
       time_info.completion_after =
@@ -221,7 +215,7 @@ absl::Status WritePingPongTraffic::RunTarget() {
   if (auto status_or_value = queue_pair_->PollMemory(pong_address_);
       !status_or_value.ok()) {
     ret_status = status_or_value.status();
-    LOG(ERROR) << "Target failed to receive the initial pong: " << ret_status;
+    LOG(ERROR) << "Target failed to receive the initial ping: " << ret_status;
   } else {
     time_info.mem_polled = status_or_value.value();
   }
@@ -239,7 +233,7 @@ absl::Status WritePingPongTraffic::RunTarget() {
       time_info.post_before = status_or_times.value().before;
       time_info.post_after = status_or_times.value().after;
     }
-    // Clear completion of the ping write.
+    // Clear completion of the pong write.
     auto status_or_completion = completion_queue_manager_->PollUntilTimeout();
     if (!status_or_completion.ok()) {
       ret_status = status_or_completion.status();
@@ -279,7 +273,7 @@ absl::Status WritePingPongTraffic::RunTarget() {
     if (auto status_or_value = queue_pair_->PollMemory(pong_address_);
         !status_or_value.ok()) {
       ret_status = status_or_value.status();
-      LOG(ERROR) << "Target failed to receive the pong: " << ret_status
+      LOG(ERROR) << "Target failed to receive the ping: " << ret_status
                  << " after: " << total;
       break;
     } else {
@@ -373,8 +367,16 @@ absl::Status SendPingPongTraffic::RunInitiator() {
       ret_status = status;
       break;
     }
-    latency_[i] = (time_info.recv_after - time_info.post_before) / 2.0;
-    if (!skip_latency_stats_) {
+
+    if (sample_latency_) {
+      // Store latency sample into circular buffer.
+      latency_[i++] = (time_info.recv_after - time_info.post_before) / 2.0;
+      if (i == kTracingLatencyBufferSize) {
+        i = 0;
+      }
+    } else {
+      // Compute tdigest metrics when not reporting individual latency samples.
+      latency_[i] = (time_info.recv_after - time_info.post_before) / 2.0;
       detail_time_[i] = time_info;
 
       // Maintain most recent kTracingLatencyBufferSize samples and merge into
@@ -405,16 +407,19 @@ absl::Status SendPingPongTraffic::RunInitiator() {
     LOG_EVERY_N_SEC(ERROR, 60)
         << "Initiator failed at: " << total << " " << ret_status;
   }
-  if (!skip_latency_stats_) {
+
+  if (sample_latency_) {
+    // If latency sampling is enabled and fewer than kTracingLatencyBufferSize
+    // samples are collected, resize the array to the number of valid samples.
+    if (total < kTracingLatencyBufferSize) {
+      latency_.resize(total);
+    }
+    total_latency_count_ = total;
+  } else {
+    // If latency sampling is disabled, merge remaining values into tdigest.
     if (i != 0) {
       latency_.resize(i);
       latency_tdigest_ = latency_tdigest_.merge(latency_);
-    }
-    for (int i = 0; i < kTracingLatencyBufferSize; ++i) {
-      auto info = detail_time_[i];
-      VLOG(1) << i + 1 << "," << info.post_after - info.post_before << ","
-              << info.completion_after - info.post_before << ","
-              << (info.recv_after - info.post_before) / 2.0;
     }
   }
   return ret_status;
@@ -451,9 +456,16 @@ absl::Status SendPingPongTraffic::RunTarget() {
       time_info.post_before = status_or_times.value().before;
       time_info.post_after = status_or_times.value().after;
     }
-    latency_[i] = (time_info.post_after - time_info.recv_before);
 
-    if (!skip_latency_stats_) {
+    if (sample_latency_) {
+      // Store latency sample into circular buffer.
+      latency_[i++] = (time_info.post_after - time_info.recv_before);
+      if (i == kTracingLatencyBufferSize) {
+        i = 0;
+      }
+    } else {
+      // Compute tdigest metrics when not reporting individual latency samples.
+      latency_[i] = (time_info.post_after - time_info.recv_before);
       detail_time_[i] = time_info;
 
       // Maintain most recent kTracingLatencyBufferSize samples and merge into
@@ -488,12 +500,15 @@ absl::Status SendPingPongTraffic::RunTarget() {
     }
   }  // End of the iterations.
 
-  if (!skip_latency_stats_) {
-    for (int i = 0; i < kTracingLatencyBufferSize; ++i) {
-      VLOG(1) << "target " << i << ", "
-              << detail_time_[i].post_after - detail_time_[i].post_before
-              << ", " << latency_[i];
+  if (sample_latency_) {
+    total_latency_count_ = total;
+    // If latency sampling is enabled and fewer than kTracingLatencyBufferSize
+    // samples are collected, resize the array to the number of valid samples.
+    if (total < kTracingLatencyBufferSize) {
+      latency_.resize(total);
     }
+  } else {
+    // If latency sampling is disabled, merge remaining values into tdigest.
     if (i != 0) {
       latency_.resize(i);
       latency_tdigest_ = latency_tdigest_.merge(latency_);
@@ -511,26 +526,15 @@ void SendPingPongTraffic::Update() {
 
   summary_->set_global_traffic_id(traffic_pattern_.global_traffic_pattern_id());
 
-  if (skip_latency_stats_) {
-    summary_->set_num_latency_obtained(1);
-
-    proto::LatencyResult result;
-    // Populates only the last latency value in the buffer, i.e. does not
-    // actually compute aggregate statistics.
-    utils::DurationToProto(absl::Nanoseconds(latency_[0]),
-                           *result.mutable_average_latency());
-    utils::DurationToProto(absl::Nanoseconds(latency_[0]),
-                           *result.mutable_median_latency());
-    utils::DurationToProto(absl::Nanoseconds(latency_[0]),
-                           *result.mutable_p99_latency());
-    utils::DurationToProto(absl::Nanoseconds(latency_[0]),
-                           *result.mutable_p999_latency());
-    utils::DurationToProto(absl::Nanoseconds(latency_[0]),
-                           *result.mutable_p9999_latency());
-    utils::DurationToProto(absl::Nanoseconds(latency_[0]),
-                           *result.mutable_min_latency());
-
-    *summary_->mutable_latency() = result;
+  if (sample_latency_) {
+    // Store total number of pingpong iterations completed, independent of
+    // sample buffer size.
+    summary_->set_num_latency_obtained(total_latency_count_);
+    // Append individual latency values from sample buffer.
+    for (const auto& latency : latency_) {
+      utils::DurationToProto(absl::Nanoseconds(latency),
+                             *summary_->add_latency_samples());
+    }
   } else {
     summary_->set_num_latency_obtained(latency_tdigest_.count());
     *summary_->mutable_latency() =
@@ -590,7 +594,9 @@ absl::Status BandwidthTraffic::Prepare() {
   iterations_ = AdjustTraffic(op_size_, iterations_,
                               absl::GetFlag(FLAGS_max_traffic_in_gb));
 
-  int wr_id = 0;
+  send_wr_id_base_ = 1;
+  // Assumes that local/remote mem sizes are scaled by the slots value.
+  const int num_qp_mem_slots = absl::GetFlag(FLAGS_qp_memory_space_slots);
   // Post recv buffers for target.
   // Buffer size equals to max_outstanding + num_prepost_receive_ops.
   if (queue_pair_->IsTarget() && ibv_opcode_ == IBV_WR_SEND) {
@@ -599,35 +605,34 @@ absl::Status BandwidthTraffic::Prepare() {
         max_outstanding_ +
         traffic_pattern_.traffic_characteristics().num_prepost_receive_ops();
     recv_scatter_gather_entries_.resize(max_recv_completion);
-    recv_work_requests_.resize(max_recv_completion);
-
-    LOG(INFO) << "Target posts recvs";
+    // Recv wr_ids are 1 through max_recv_completion. A dummy wr is allocated at
+    // index 0 to simplify indexing.
+    recv_work_requests_.resize(max_recv_completion + 1);
     uint64_t addr = queue_pair_->GetReceiveMemoryBaseAddr();
-    //
     for (int i = 0; i < max_recv_completion; ++i) {
       recv_scatter_gather_entries_[i] = {
-          .addr = addr,
+          .addr = addr + ((i % num_qp_mem_slots) * op_size_),
           .length = static_cast<uint32_t>(op_size_),
           .lkey = queue_pair_->GetReceiveKey()};
-      recv_work_requests_[i] = {
-          .wr_id = static_cast<uint64_t>(++wr_id),
+      recv_work_requests_[i + 1] = {
+          .wr_id = static_cast<uint64_t>(i + 1),
           .next = nullptr,
           .sg_list = &recv_scatter_gather_entries_[i],
           .num_sge = 1,
       };
-      recv_wr_finder_[recv_work_requests_[i].wr_id] = &recv_work_requests_[i];
     }
     // Chain all recv WR and post all at once.
     for (int i = 0; i < recv_work_requests_.size() - 1; ++i) {
       recv_work_requests_[i].next = &recv_work_requests_[i + 1];
     }
     ibv_recv_wr* bad_recv_wr;
-    if (int ret = queue_pair_->PostRecv(&recv_work_requests_[0], &bad_recv_wr);
+    if (int ret = queue_pair_->PostRecv(&recv_work_requests_[1], &bad_recv_wr);
         ret < 0) {
       return absl::FailedPreconditionError(
           absl::StrCat("ibv_post_recv failed.", ret, strerror(errno)));
     }
-    LOG(INFO) << "wr 1 ~ " << wr_id << " are for recvs";
+    // First send wr_id begins after recv wr_id range.
+    send_wr_id_base_ += max_recv_completion;
   }
 
   // Prepare work requests and scatters gather entries for initiator.
@@ -636,12 +641,26 @@ absl::Status BandwidthTraffic::Prepare() {
     bw_work_requests_.resize(max_outstanding_);
     batch_trackers_.resize((max_outstanding_ + batch_size_ - 1) / batch_size_);
 
+    // In bidirectional case, apply memory offset for flows 0->1 and 1->0 to
+    // avoid contention on each memory block. Otherwise, offset is always 0.
+    uint64_t memory_block_offset = 0;
+    if (queue_pair_->IsTarget()) {
+      // Traffic pattern specifies one initiator and target follower id, even in
+      // bidirectional case. Initiator (first follower id) uses base memory
+      // address, target (second) uses offset of op_size.
+      if (traffic_pattern_.follower_id() ==
+          traffic_pattern_.bandwidth_traffic().target()) {
+        memory_block_offset = num_qp_mem_slots * op_size_;
+      }
+    }
+
     uint64_t initiator_op_addr =
-        queue_pair_->GetLocallyControlledMemoryBaseAddr();
+        queue_pair_->GetLocallyControlledMemoryBaseAddr() + memory_block_offset;
     for (int i = 0; i < bw_work_requests_.size(); ++i) {
-      scatter_gather_entries_[i] = {.addr = initiator_op_addr,
-                                    .length = static_cast<uint32_t>(op_size_),
-                                    .lkey = queue_pair_->GetLocalKey()};
+      scatter_gather_entries_[i] = {
+          .addr = initiator_op_addr + ((i % num_qp_mem_slots) * op_size_),
+          .length = static_cast<uint32_t>(op_size_),
+          .lkey = queue_pair_->GetLocalKey()};
       unsigned int send_flags = IBV_SEND_SIGNALED;
       if (signal_only_one_in_batch_ && (i + 1) % batch_size_ != 0) {
         // Do not signal if `signal_only_one_in_batch_` is true and this is not
@@ -658,7 +677,7 @@ absl::Status BandwidthTraffic::Prepare() {
         send_flags = send_flags | IBV_SEND_INLINE;
       }
       bw_work_requests_[i] = {
-          .wr_id = static_cast<uint64_t>(++wr_id),
+          .wr_id = static_cast<uint64_t>(send_wr_id_base_ + i),
           .next = nullptr,
           .sg_list = &scatter_gather_entries_[i],
           .num_sge = 1,
@@ -668,7 +687,8 @@ absl::Status BandwidthTraffic::Prepare() {
       // Only read and write have remote addr.
       if (ibv_opcode_ != IBV_WR_SEND) {
         bw_work_requests_[i].wr.rdma.remote_addr =
-            queue_pair_->GetRemoteMemoryBaseAddr();
+            queue_pair_->GetRemoteMemoryBaseAddr() + memory_block_offset +
+            ((i % num_qp_mem_slots) * op_size_);
         bw_work_requests_[i].wr.rdma.rkey = queue_pair_->GetRemoteKey();
       }
     }
@@ -683,22 +703,18 @@ absl::Status BandwidthTraffic::Prepare() {
         last_wr = &bw_work_requests_[j];
       }
       struct BatchTracker* cur_tracker = &batch_trackers_[i];
+      cur_tracker->signaled_wr_id = last_wr->wr_id;
       cur_tracker->work_request_ptr = first_wr;
       cur_tracker->cnt = batch_size_;
       if ((i + 1) * batch_size_ > max_outstanding_) {
         cur_tracker->cnt = max_outstanding_ - (i * batch_size_);
       }
-      tracker_finder_[last_wr->wr_id] = cur_tracker;
       if (i > 0) {
         batch_trackers_[i - 1].next = &batch_trackers_[i];
       }
     }
     next_batch_ = &batch_trackers_[0];
     batch_trackers_[batch_trackers_.size() - 1].next = next_batch_;
-    for (int i = 0; i < batch_trackers_.size(); ++i) {
-      VLOG(1) << "tracker " << i << ": " << batch_trackers_[i].cnt;
-    }
-    LOG(INFO) << "Created WQ for " << batch_size_;
   }
   return absl::OkStatus();
 }
@@ -771,27 +787,31 @@ absl::Status BandwidthTraffic::Run() {
       // Unsignaled ops do not generate completions. `num_polled` should be
       // small in that case.
       for (int i = 0; i < completion_info.num_completions; ++i) {
-        auto tracker_it =
-            tracker_finder_.find(completion_info.completions[i].wr_id);
-        if (ABSL_PREDICT_FALSE(tracker_it == tracker_finder_.end())) {
-          LOG(ERROR) << "Didn't find batch tracker for completed wr_id: "
-                     << completion_info.completions[i].wr_id;
-          LOG(ERROR) << "Completion status for wr_id "
-                     << completion_info.completions[i].wr_id << " is "
-                     << ibv_wc_status_str(
-                            completion_info.completions[i].status);
-          continue;
+        int batch_index =
+            (completion_info.completions[i].wr_id - send_wr_id_base_) /
+            batch_size_;
+        if (ABSL_PREDICT_FALSE(batch_index >= batch_trackers_.size())) {
+          LOG(ERROR) << "Unexpected completion wr_id "
+                     << completion_info.completions[i].wr_id
+                     << " outside batch range 1.."
+                     << batch_trackers_.size() - 1;
+          abort_.Notify();
+          break;
         }
-        const auto* tracker = tracker_it->second;
-        if (ABSL_PREDICT_FALSE(tracker == nullptr)) {
-          LOG(ERROR) << "Tracker is null for completed wr_id: "
-                     << completion_info.completions[i].wr_id;
-          continue;
+        auto& tracker = batch_trackers_[batch_index];
+        if (ABSL_PREDICT_FALSE(tracker.signaled_wr_id !=
+                               completion_info.completions[i].wr_id)) {
+          LOG(ERROR) << "Unexpected completion wr_id "
+                     << completion_info.completions[i].wr_id
+                     << " does not match signaled wr_id for batch: "
+                     << tracker.signaled_wr_id;
+          abort_.Notify();
+          break;
         }
-        outstanding -= tracker->cnt;
-        total_completed += tracker->cnt;
+        outstanding -= tracker.cnt;
+        total_completed += tracker.cnt;
         latency_[latency_index++] =
-            completion_info.completion_after - tracker->time_sent;
+            completion_info.completion_after - tracker.time_sent;
         if (latency_index == kTracingLatencyBufferSize) {
           latency_tdigest_ = latency_tdigest_.merge(latency_);
           latency_index = 0;
@@ -801,19 +821,20 @@ absl::Status BandwidthTraffic::Run() {
       outstanding -= completion_info.num_completions;
       total_completed += completion_info.num_completions;
       for (int i = 0; i < completion_info.num_completions; ++i) {
-        auto tracker_it =
-            tracker_finder_.find(completion_info.completions[i].wr_id);
-        if (tracker_it == tracker_finder_.end()) {
-          continue;
+        int batch_index =
+            (completion_info.completions[i].wr_id - send_wr_id_base_) /
+            batch_size_;
+        if (ABSL_PREDICT_FALSE(batch_index >= batch_trackers_.size())) {
+          LOG(ERROR) << "Unexpected completion wr_id "
+                     << completion_info.completions[i].wr_id
+                     << " outside batch range 1.."
+                     << batch_trackers_.size() - 1;
+          abort_.Notify();
+          break;
         }
-        const auto* tracker = tracker_it->second;
-        if (ABSL_PREDICT_FALSE(tracker == nullptr)) {
-          LOG(ERROR) << "Tracker is null for completed wr_id: "
-                     << completion_info.completions[i].wr_id;
-          continue;
-        }
-        latency_[latency_index++] =
-            completion_info.completion_after - tracker->time_sent;
+
+        latency_[latency_index++] = completion_info.completion_after -
+                                    batch_trackers_[batch_index].time_sent;
         if (latency_index == kTracingLatencyBufferSize) {
           latency_tdigest_ = latency_tdigest_.merge(latency_);
           latency_index = 0;
@@ -823,9 +844,14 @@ absl::Status BandwidthTraffic::Run() {
     // Check whether the traffic has reached the experiment end time.
     if (completion_info.completion_after > end_time) break;
   }
+
+  // Get final timestamp after exiting polling loop.
+  int64_t actual_end = absl::GetCurrentTimeNanos();
+  int64_t duration_ns = actual_end - begin;
+
   LOG(INFO) << "Waiting for up to "
             << absl::ToInt64Seconds(utils::kHardCutoffAfterExperiment)
-            << " seconds to drain outstanding ops.";
+            << " seconds to drain " << outstanding << " outstanding ops.";
 
   // Wait extra time to make sure pending ops have time to come back.
   int64_t hard_cutoff_time =
@@ -847,32 +873,27 @@ absl::Status BandwidthTraffic::Run() {
       // Unsignaled ops do not generate completions. `num_polled` should be
       // small in that case.
       for (int i = 0; i < completion_info.num_completions; ++i) {
-        auto tracker_it =
-            tracker_finder_.find(completion_info.completions[i].wr_id);
-        if (ABSL_PREDICT_FALSE(tracker_it == tracker_finder_.end())) {
-          LOG(ERROR) << "Didn't find batch tracker for completed wr_id: "
-                     << completion_info.completions[i].wr_id;
-          LOG(ERROR) << "Completion status for wr_id "
-                     << completion_info.completions[i].wr_id << " is "
-                     << ibv_wc_status_str(
-                            completion_info.completions[i].status);
-          continue;
+        int batch_index =
+            (completion_info.completions[i].wr_id - send_wr_id_base_) /
+            batch_size_;
+        if (ABSL_PREDICT_FALSE(batch_index >= batch_trackers_.size())) {
+          LOG(ERROR) << "Unexpected completion wr_id "
+                     << completion_info.completions[i].wr_id
+                     << " outside batch range 1.."
+                     << batch_trackers_.size() - 1;
+          abort_.Notify();
+          break;
         }
-        const auto* tracker = tracker_it->second;
-        if (ABSL_PREDICT_FALSE(tracker == nullptr)) {
-          LOG(ERROR) << "Tracker is null for completed wr_id: "
-                     << completion_info.completions[i].wr_id;
-          continue;
-        }
-        outstanding -= tracker->cnt;
-        total_completed += tracker->cnt;
+        outstanding -= batch_trackers_[batch_index].cnt;
       }
     } else {
       outstanding -= completion_info.num_completions;
       total_completed += completion_info.num_completions;
     }
   }
-  return Finish(outstanding, latency_index, begin, total_completed,
+  LOG(INFO) << "Drain finished with " << outstanding
+            << " remaining outstanding ops.";
+  return Finish(outstanding, latency_index, duration_ns, total_completed,
                 /*total_received=*/0, num_hit_outstanding);
 }
 
@@ -961,47 +982,52 @@ absl::Status BandwidthTraffic::RunSend() {
         if (completion.opcode == IBV_WC_RECV) {
           ++total_received;
           ++recv_to_post;
-          auto recv_it = recv_wr_finder_.find(wr_id);
-          if (ABSL_PREDICT_FALSE(recv_it == recv_wr_finder_.end())) {
-            return absl::InternalError(absl::StrCat("Recv not found: ", wr_id));
+          if (ABSL_PREDICT_FALSE(wr_id == 0 ||
+                                 wr_id >= recv_work_requests_.size())) {
+            LOG(ERROR) << "Unexpected recv wr_id " << wr_id
+                       << " outside range 1.."
+                       << recv_work_requests_.size() - 1;
+            abort_.Notify();
+            break;
           }
-          recv_it->second->next = nullptr;
+          recv_work_requests_[wr_id].next = nullptr;
           if (prev_recv_wr != 0) {
             // If this is not the first, chain this to the prev.
-            recv_wr_finder_[prev_recv_wr]->next = recv_it->second;
+            recv_work_requests_[prev_recv_wr].next =
+                &recv_work_requests_[wr_id];
           } else {
             first_recv_wr = wr_id;
           }
           prev_recv_wr = wr_id;
           continue;
         }
-        // Now process send completions.
-        struct BatchTracker* tracker = nullptr;
-        auto tracker_it = tracker_finder_.find(wr_id);
+        // Process send completions.
+        int batch_index = (wr_id - send_wr_id_base_) / batch_size_;
+        if (ABSL_PREDICT_FALSE(batch_index >= batch_trackers_.size())) {
+          LOG(ERROR) << "Unexpected completion wr_id " << wr_id
+                     << " outside batch range 1.."
+                     << batch_trackers_.size() - 1;
+          abort_.Notify();
+          break;
+        }
+        auto& tracker = batch_trackers_[batch_index];
         if (signal_only_one_in_batch_) {
-          if (ABSL_PREDICT_FALSE(tracker_it == tracker_finder_.end())) {
-            LOG(ERROR) << "Didn't find batch tracker for completed wr_id: "
-                       << completion_info.completions[i].wr_id;
-            LOG(ERROR) << "Completion status for wr_id "
-                       << completion_info.completions[i].wr_id << " is "
-                       << ibv_wc_status_str(
-                              completion_info.completions[i].status);
-            continue;
+          if (ABSL_PREDICT_FALSE(tracker.signaled_wr_id != wr_id)) {
+            LOG(ERROR) << "Batch tracker wr_id mismatch: "
+                       << tracker.signaled_wr_id
+                       << " in tracker; completion is for " << wr_id;
+            abort_.Notify();
+            break;
           }
-          tracker = tracker_it->second;
-          outstanding -= tracker->cnt;
-          total_completed += tracker->cnt;
+
+          outstanding -= tracker.cnt;
+          total_completed += tracker.cnt;
         } else {
           --outstanding;
           ++total_completed;
-          if (tracker_it == tracker_finder_.end()) {
-            // Skip reporting latency if no corresponding tracker exists.
-            continue;
-          }
-          tracker = tracker_finder_[wr_id];
         }
         latency_[latency_index++] =
-            completion_info.completion_after - tracker->time_sent;
+            completion_info.completion_after - tracker.time_sent;
         if (latency_index == kTracingLatencyBufferSize) {
           latency_tdigest_ = latency_tdigest_.merge(latency_);
           latency_index = 0;
@@ -1009,14 +1035,20 @@ absl::Status BandwidthTraffic::RunSend() {
       }
       // Post recv buffers if needed.
       if (recv_to_post != 0) {
-        queue_pair_->PostRecv(recv_wr_finder_[first_recv_wr], &bad_recv_wr);
+        queue_pair_->PostRecv(&recv_work_requests_[first_recv_wr],
+                              &bad_recv_wr);
       }
       if (completion_info.completion_after > end_time) break;
     }
   }
+
+  // Get final timestamp after exiting polling loop.
+  int64_t actual_end = absl::GetCurrentTimeNanos();
+  int64_t duration_ns = actual_end - begin;
+
   LOG(INFO) << "Waiting for up to "
             << absl::ToInt64Seconds(utils::kHardCutoffAfterExperiment)
-            << " seconds to drain outstanding ops.";
+            << " seconds to drain " << outstanding << " outstanding ops.";
 
   // Wait extra time to make sure pending ops have time to come back.
   int64_t hard_cutoff_time =
@@ -1034,70 +1066,48 @@ absl::Status BandwidthTraffic::RunSend() {
       if (completion_info.completions[i].opcode == IBV_WC_RECV) {
         continue;
       }
+      int batch_index = (wr_id - send_wr_id_base_) / batch_size_;
+      if (ABSL_PREDICT_FALSE(batch_index >= batch_trackers_.size())) {
+        LOG(ERROR) << "Unexpected completion wr_id " << wr_id
+                   << " outside batch range 1.." << batch_trackers_.size() - 1
+                   << " during final drain.";
+        continue;
+      }
+      auto& tracker = batch_trackers_[batch_index];
       if (signal_only_one_in_batch_) {
-        if (tracker_finder_.find(wr_id) == tracker_finder_.end()) {
-          LOG(ERROR) << "Received completion for wr_id: " << wr_id
-                     << ", op: " << completion_info.completions[i].opcode
-                     << " during drain, without a batch tracker.";
-          LOG(ERROR) << "Completion status for wr_id " << wr_id << " is "
-                     << ibv_wc_status_str(
-                            completion_info.completions[i].status);
-        } else {
-          const auto* tracker = tracker_finder_[wr_id];
-          outstanding -= tracker->cnt;
+        if (ABSL_PREDICT_FALSE(tracker.signaled_wr_id != wr_id)) {
+          LOG(ERROR) << "Bath tracker wr_id mismatch: "
+                     << tracker.signaled_wr_id
+                     << " in tracker; completion is for " << wr_id;
+          continue;
         }
+        outstanding -= tracker.cnt;
       } else {
+        if (wr_id < send_wr_id_base_ ||
+            wr_id >= send_wr_id_base_ + max_outstanding_) {
+          LOG(ERROR) << "Unexpected completion wr_id " << wr_id
+                     << " outside range " << send_wr_id_base_ << ".."
+                     << send_wr_id_base_ + max_outstanding_ - 1
+                     << " during final drain.";
+          continue;
+        }
         --outstanding;
       }
     }
   }
+  LOG(INFO) << "Drain finished with " << outstanding
+            << " remaining outstanding ops.";
 
-  return Finish(outstanding, latency_index, begin, total_completed,
+  return Finish(outstanding, latency_index, duration_ns, total_completed,
                 total_received, num_hit_outstanding);
 }
 
 absl::Status BandwidthTraffic::Finish(uint64_t outstanding, int k,
-                                      uint64_t begin, uint64_t total_completed,
+                                      uint64_t duration_ns,
+                                      uint64_t total_completed,
                                       uint64_t total_received,
                                       uint64_t num_hit_outstanding) {
-  int64_t end = absl::GetCurrentTimeNanos();
-  while (outstanding > 0) {
-    // Drain the CQ.
-    auto completion_info_or_status = completion_queue_manager_->Poll();
-    if (ABSL_PREDICT_FALSE(!completion_info_or_status.ok())) {
-      return completion_info_or_status.status();
-    }
-    auto completion_info = completion_info_or_status.value();
-    for (int i = 0; i < completion_info.num_completions; ++i) {
-      auto wr_id = completion_info.completions[i].wr_id;
-      if (completion_info.completions[i].opcode == IBV_WC_RECV) {
-        continue;
-      }
-      if (signal_only_one_in_batch_) {
-        if (tracker_finder_.find(wr_id) == tracker_finder_.end()) {
-          LOG(WARNING) << "Received completion for wr_id: " << wr_id
-                       << ", op: " << completion_info.completions[i].opcode
-                       << " during drain, without a batch tracker.";
-        } else {
-          const auto* tracker = tracker_finder_[wr_id];
-          outstanding -= tracker->cnt;
-        }
-      } else {
-        --outstanding;
-      }
-    }
-    if ((absl::GetCurrentTimeNanos() - end) >
-        30 * utils::kSecondInNanoseconds) {
-      LOG(ERROR) << "Failed to drain " << outstanding << " ops.";
-      break;
-    }
-  }
-  if (k != kTracingLatencyBufferSize) {
-    latency_.resize(k);
-    latency_tdigest_ = latency_tdigest_.merge(latency_);
-  }
-  int64_t time = end - begin;
-  double total_sec = (time * 1.0) / utils::kSecondInNanoseconds;
+  double total_sec = (duration_ns * 1.0) / utils::kSecondInNanoseconds;
   double total_ops = total_completed;
   double ops = (total_completed) / total_sec;
   summary_->mutable_throughput()->set_ops_per_second(ops);
@@ -1113,22 +1123,30 @@ absl::Status BandwidthTraffic::Finish(uint64_t outstanding, int k,
             << " max: " << latency_tdigest_.max()
             << " min: " << latency_tdigest_.min()
             << " median: " << latency_tdigest_.estimateQuantile(0.5);
-  LOG(INFO) << "Throughput (gbps): " << summary_->throughput().gbps();
+  LOG(INFO) << "Throughput (gbps): " << summary_->throughput().gbps()
+            << " ops/sec: " << summary_->throughput().ops_per_second();
   LOG(INFO) << "Number of times hitting the cap: " << num_hit_outstanding;
-  // Fail the test if there were remaining outstanding.
-  if (outstanding > 0) {
-    return absl::DeadlineExceededError(
-        absl::StrCat("Failed to drain the completion queue, with ", outstanding,
-                     " remaining outstanding operations and ", total_completed,
-                     " successful completions at end time"));
-  }
-  // Fail the test if total number of completion/receiving is less than intended
-  // number of ops. Only check on initiator and when iteration is set.
+  // Fail the experiment if total number of completions is less than intended
+  // number of ops. Only check on initiator, when iterations_ is set.
   if (queue_pair_->IsTarget() || !iterations_) return absl::OkStatus();
   if (total_completed < iterations_) {
     return absl::DeadlineExceededError(absl::StrCat(
         "Failed to complete target of ", iterations_, " iterations in ",
         total_sec, " sec. Completed ", total_completed, " ops."));
+  }
+
+  // If there are remaining outstanding ops after waiting to drain, fail the
+  // test unless ignore flag is set.
+  if (outstanding > 0) {
+    if (absl::GetFlag(FLAGS_ignore_outstanding_ops_at_cutoff)) {
+      LOG(INFO) << "Ignoring outstanding ops which failed to drain: "
+                << outstanding;
+      return absl::OkStatus();
+    }
+    return absl::DeadlineExceededError(
+        absl::StrCat("Failed to drain the completion queue, with ", outstanding,
+                     " remaining outstanding operations and ", total_completed,
+                     " successful completions at end time"));
   }
   return absl::OkStatus();
 }

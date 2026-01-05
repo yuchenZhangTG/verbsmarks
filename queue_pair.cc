@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -135,8 +135,7 @@ void PopulateMemoryBlock(
   if (!memory_block_metadata.has_value()) {
     return;
   }
-  char *buffer = reinterpret_cast<char *>(memory_block_metadata->address);
-  //
+  char* buffer = reinterpret_cast<char*>(memory_block_metadata->address);
   for (int i = 0; i < memory_block_metadata->size; ++i) {
     buffer[i] = c;
   }
@@ -149,7 +148,7 @@ void ValidateMemoryBlock(
     return;
   }
   LOG(INFO) << "ValidateMemoryBlock: " << name;
-  char *buffer = reinterpret_cast<char *>(memory_block_metadata->address);
+  char* buffer = reinterpret_cast<char*>(memory_block_metadata->address);
   LOG(INFO) << "Hash of : " << name << " "
             << farmhash::Fingerprint64(buffer, memory_block_metadata->size);
   // Print out values for manual inspection when the block is small.
@@ -161,10 +160,10 @@ void ValidateMemoryBlock(
   }
 }
 
-QueuePair::QueuePair(ibv_context *context,
+QueuePair::QueuePair(ibv_context* context,
                      const ibverbs_utils::LocalIbverbsAddress local_address,
                      const proto::QueuePairConfig config, bool is_pingpong,
-                     CompletionQueueManager *completion_queue_manager)
+                     CompletionQueueManager* completion_queue_manager)
     : is_pingpong_(is_pingpong),
       state_(State::kUninitialized),
       collect_measurements_(false),
@@ -222,7 +221,7 @@ QueuePair::QueuePair(ibv_context *context,
 }
 
 void QueuePair::StartCollectingMeasurements() {
-  for (auto &it : statistics_trackers_) {
+  for (auto& it : statistics_trackers_) {
     it.second.Reset();
   }
   collect_measurements_ = true;
@@ -233,7 +232,7 @@ void QueuePair::ResumeCollectingMeasurements() { collect_measurements_ = true; }
 void QueuePair::StopCollectingMeasurements() {
   collect_measurements_ = false;
   int64_t end_time = absl::GetCurrentTimeNanos();
-  for (auto &it : statistics_trackers_) {
+  for (auto& it : statistics_trackers_) {
     // Flush any buffered latency samples and end throughput calculation. Must
     // be done before AccessStatistics (which is const).
     it.second.Finish(end_time, outstanding_initiated_operations_.size());
@@ -284,9 +283,9 @@ proto::CurrentStats::QueuePairCurrentStats QueuePair::GetCurrentStatistics() {
     return qp_stats;
   }
 
-  for (auto &it : statistics_trackers_) {
+  for (auto& it : statistics_trackers_) {
     // Append current stats from each tracker, if stats are available.
-    proto::CurrentStats::PerOpTypeSizeCurrentStats *appended_stats =
+    proto::CurrentStats::PerOpTypeSizeCurrentStats* appended_stats =
         it.second.PopCurrentStatistics(&qp_stats);
     if (appended_stats != nullptr) {
       // Fill in op type/size values given map key <type,size>.
@@ -308,7 +307,7 @@ void QueuePair::ValidateOpBuffers() {
   ValidateMemoryBlock(local_controlled_memory_block_metadata_, "local");
 }
 
-void QueuePair::ProcessFailedCompletion(const ibv_wc &completion) {
+void QueuePair::ProcessFailedCompletion(const ibv_wc& completion) {
   if (auto it = outstanding_recv_operations_.find(completion.wr_id);
       it != outstanding_recv_operations_.end()) {
     outstanding_recv_operations_.erase(it);
@@ -323,7 +322,7 @@ void QueuePair::ProcessFailedCompletion(const ibv_wc &completion) {
 }
 
 absl::StatusOr<uint64_t> QueuePair::ProcessReceiveCompletion(
-    const ibv_wc &completion) {
+    const ibv_wc& completion) {
   // Make sure that the completion corresponds to an op issued.
   auto it = outstanding_recv_operations_.find(completion.wr_id);
   if (it == outstanding_recv_operations_.end()) {
@@ -500,7 +499,7 @@ absl::StatusOr<QueuePair::PingTime> QueuePair::SimplePostSend(uint64_t addr,
       .opcode = IBV_WR_SEND,
       .send_flags = send_flags,
   };
-  ibv_send_wr *bad_wr;
+  ibv_send_wr* bad_wr;
   int64_t before = absl::GetCurrentTimeNanos();
   const int ret = ibv_post_send(queue_pair_.get(), &work_request, &bad_wr);
   if (ret != 0) {
@@ -521,7 +520,7 @@ absl::StatusOr<QueuePair::PingTime> QueuePair::SimplePostReceive(
       .sg_list = &scatter_gather_entry,
       .num_sge = 1,
   };
-  ibv_recv_wr *bad_wr;
+  ibv_recv_wr* bad_wr;
   int64_t before = absl::GetCurrentTimeNanos();
   int ret = ibv_post_recv(queue_pair_.get(), &work_request, &bad_wr);
   if (ret != 0 && errno != 0) {
@@ -553,7 +552,7 @@ absl::StatusOr<QueuePair::PingTime> QueuePair::SimplePostWrite(
   };
   work_request.wr.rdma.remote_addr = remote_addr,
   work_request.wr.rdma.rkey = remote_rkey_space_.GetMemoryKey();
-  ibv_send_wr *bad_wr;
+  ibv_send_wr* bad_wr;
   int64_t before = absl::GetCurrentTimeNanos();
   VLOG(2) << "ibv_post_send";
   const int ret = ibv_post_send(queue_pair_.get(), &work_request, &bad_wr);
@@ -567,7 +566,7 @@ absl::StatusOr<QueuePair::PingTime> QueuePair::SimplePostWrite(
 absl::StatusOr<int64_t> QueuePair::PollMemory(int64_t addr) {
   int64_t now = absl::GetCurrentTimeNanos();
   int64_t until = now + 10 * utils::kSecondInNanoseconds;
-  uint64_t *ptr = reinterpret_cast<uint64_t *>(addr);
+  uint64_t* ptr = reinterpret_cast<uint64_t*>(addr);
   while (now < until) {
     now = absl::GetCurrentTimeNanos();
     // If the value is not 0, it is received from the peer.
@@ -582,14 +581,14 @@ absl::StatusOr<int64_t> QueuePair::PollMemory(int64_t addr) {
 }
 
 absl::Status QueuePair::PopulateRemoteAttributes(
-    proto::RemoteQueuePairAttributes &remote_attrs) {
+    proto::RemoteQueuePairAttributes& remote_attrs) {
   if (state_ < State::kInitialized) {
     return absl::FailedPreconditionError(
         "Must initialize resources before getting attributes.");
   }
   remote_attrs.set_qp_num(queue_pair_->qp_num);
   remote_attrs.set_gid(std::string(
-      reinterpret_cast<const char *>(local_address_.gid.raw), kGidLength));
+      reinterpret_cast<const char*>(local_address_.gid.raw), kGidLength));
   if (remote_controlled_memory_block_metadata_.has_value()) {
     remote_attrs.mutable_rkeys()->Add(
         remote_controlled_memory_region_rkeys_.begin(),
@@ -601,26 +600,22 @@ absl::Status QueuePair::PopulateRemoteAttributes(
 }
 
 void QueuePair::InstallStatsTrackerKey(std::pair<proto::RdmaOp, int> key) {
-  const proto::MetricsCollection &metrics = config_.metrics_collection();
+  const proto::MetricsCollection& metrics = config_.metrics_collection();
   statistics_trackers_.try_emplace(key, metrics.enable_per_second_stats(),
                                    metrics.bypass_tdigest_buffering());
 }
 
 absl::StatusOr<int> QueuePair::HandleExternalCompletion(
-    const ibv_wc &completion, int64_t before_poll, int64_t after_poll) {
+    const ibv_wc& completion, int64_t before_poll, int64_t after_poll) {
   if (should_trace_) {
     // There are only kTracingLatencyBufferSize items. Overwrite if needed.
     before_poll_[completion.wr_id % kTracingLatencyBufferSize] = before_poll;
     after_poll_[completion.wr_id % kTracingLatencyBufferSize] = after_poll;
   }
 
-  //
-  // Make sure operation was successful.
+  // Clean up internal metadata for non-successful completions. Caller handles
+  // reporting and propagating error status.
   if (completion.status != IBV_WC_SUCCESS) {
-    LOG_EVERY_N(INFO, 10000) << absl::StrCat(
-        "Operation with wr_id ", completion.wr_id,
-        " with op code: ", code_to_op(completion.opcode),
-        " completed with error: ", ibv_wc_status_str(completion.status));
     ProcessFailedCompletion(completion);
     return 0;
   }
@@ -636,7 +631,7 @@ absl::StatusOr<int> QueuePair::HandleExternalCompletion(
       int iter = completion.wr_id % kTracingLatencyBufferSize;
       before_poll_[iter] = before_poll;
       after_poll_[iter] = after_poll;
-      timestamp_received_[iter] = *(reinterpret_cast<int64_t *>(addr));
+      timestamp_received_[iter] = *(reinterpret_cast<int64_t*>(addr));
     }
     // Post a new receive operation at the address at which the operation
     // just completed.
@@ -682,7 +677,7 @@ absl::StatusOr<int64_t> QueuePair::ProcessCompleted(
     return absl::NotFoundError(failed_completion_messages_.back());
   }
 
-  OutstandingOperation &op = it->second;
+  OutstandingOperation& op = it->second;
   int64_t unsignaled_wr_id_to_process = op.unsignaled_wr_id_to_process;
 
   // If desired, check that the memory at the initiator and target is the
@@ -694,12 +689,12 @@ absl::StatusOr<int64_t> QueuePair::ProcessCompleted(
            op.op_type == proto::RdmaOp::RDMA_OP_WRITE_IMMEDIATE)) {
         if (should_trace_ && !should_send_time_stamp_) {
           // If tracing is requested, expect the iteration # in the payload.
-          int64_t *buffer = reinterpret_cast<int64_t *>(op.target_addr.value());
+          int64_t* buffer = reinterpret_cast<int64_t*>(op.target_addr.value());
           if (*buffer != wr_id % kTracingLatencyBufferSize) {
             return absl::InternalError("Unexpected value");
           }
         } else {
-          uint8_t *buffer = reinterpret_cast<uint8_t *>(op.target_addr.value());
+          uint8_t* buffer = reinterpret_cast<uint8_t*>(op.target_addr.value());
           for (int32_t i = 0; i < op.length_bytes; ++i) {
             if (buffer[i] != GetBufferVal(i, wr_id)) {
               return absl::InternalError(absl::StrCat(
@@ -707,17 +702,16 @@ absl::StatusOr<int64_t> QueuePair::ProcessCompleted(
             }
           }
         }
-      } else if (std::memcmp(
-                     reinterpret_cast<uint8_t *>(op.initiator_addr),
-                     reinterpret_cast<uint8_t *>(op.target_addr.value()),
-                     op.length_bytes) != 0) {
+      } else if (std::memcmp(reinterpret_cast<uint8_t*>(op.initiator_addr),
+                             reinterpret_cast<uint8_t*>(op.target_addr.value()),
+                             op.length_bytes) != 0) {
         return absl::InternalError(absl::StrCat("Data from operation with id ",
                                                 wr_id, " did not land."));
       }
     }
   } else if (config_.validate_op_buffers()) {
     if (op.op_type == proto::RdmaOp::RDMA_OP_READ) {
-      char *buffer = reinterpret_cast<char *>(op.initiator_addr);
+      char* buffer = reinterpret_cast<char*>(op.initiator_addr);
       LOG(INFO) << "Hash of initiator data: "
                 << farmhash::Fingerprint64(buffer, op.length_bytes)
                 << " for op " << proto::RdmaOp_Name(op.op_type);
@@ -745,10 +739,10 @@ absl::StatusOr<int64_t> QueuePair::ProcessCompleted(
   return unsignaled_wr_id_to_process;
 }
 
-absl::Status QueuePair::PostOps(const OpTypeSize &op_type_size,
+absl::Status QueuePair::PostOps(const OpTypeSize& op_type_size,
                                 const int32_t batch_size,
                                 const OpSignalType signal_type,
-                                std::optional<ibv_ah *> address_handle) {
+                                std::optional<ibv_ah*> address_handle) {
   proto::RdmaOp op_type = op_type_size.op_type;
   int32_t op_bytes = op_type_size.op_size;
   auto create_error_message = [op_type, op_bytes,
@@ -824,7 +818,7 @@ absl::Status QueuePair::PostOps(const OpTypeSize &op_type_size,
     uint64_t wr_id = GetNextWrId();
     if (op_type != proto::RdmaOp::RDMA_OP_READ &&
         (config_.populate_op_buffers() || config_.validate_op_buffers())) {
-      uint8_t *buffer = reinterpret_cast<uint8_t *>(initiator_op_addr);
+      uint8_t* buffer = reinterpret_cast<uint8_t*>(initiator_op_addr);
       VLOG(2) << "Setting buffer to send for " << wr_id;
       // Fill in the buffer with deterministic data so that it can be
       // validated on separate machines or processes.
@@ -836,10 +830,10 @@ absl::Status QueuePair::PostOps(const OpTypeSize &op_type_size,
     if (should_trace_ && op_bytes >= 8) {
       if (should_send_time_stamp_) {
         // Copy the timestamp to the buffer when send.
-        *(reinterpret_cast<int64_t *>(initiator_op_addr)) = send_time_stamp;
+        *(reinterpret_cast<int64_t*>(initiator_op_addr)) = send_time_stamp;
       } else {
         // If tracing is requested, put the iteration # in the payload.
-        *(reinterpret_cast<int64_t *>(initiator_op_addr)) =
+        *(reinterpret_cast<int64_t*>(initiator_op_addr)) =
             wr_id % kTracingLatencyBufferSize;
       }
     }
@@ -902,7 +896,7 @@ absl::Status QueuePair::PostAndProcess(int batch_size, proto::RdmaOp op_type,
                                        int32_t op_bytes,
                                        OpSignalType signal_type,
                                        int64_t before_timestamp_sent) {
-  ibv_send_wr *bad_wr;
+  ibv_send_wr* bad_wr;
 
   // Save the time at which the operation was posted so that we can later
   // compute its latency.
@@ -923,7 +917,7 @@ absl::Status QueuePair::PostAndProcess(int batch_size, proto::RdmaOp op_type,
   }
   for (int i = 0; i < batch_size; ++i) {
     int64_t next_wr_to_process = 0;
-    const ibv_send_wr &wr = work_requests_[i];
+    const ibv_send_wr& wr = work_requests_[i];
     if (should_trace_) {
       // Put the detailed timestamp in the buffer.
       if (should_send_time_stamp_) {
@@ -967,7 +961,7 @@ absl::StatusOr<int32_t> QueuePair::PostRecv(uint64_t addr) {
       .num_sge = 1,
   };
 
-  ibv_recv_wr *bad_wr;
+  ibv_recv_wr* bad_wr;
   VLOG(2) << "ibv_post_recv";
   int ret = ibv_post_recv(queue_pair_.get(), &recv, &bad_wr);
   if (ret != 0) {
@@ -981,7 +975,7 @@ absl::StatusOr<int32_t> QueuePair::PostRecv(uint64_t addr) {
 }
 
 absl::Status QueuePair::ConnectToRemoteQp(
-    const proto::RemoteQueuePairAttributes &remote_attributes) {
+    const proto::RemoteQueuePairAttributes& remote_attributes) {
   VLOG(2) << "Trying to connect to remote QP: " << remote_attributes;
   if (state_ < State::kInitialized) {
     return absl::FailedPreconditionError(
@@ -1045,8 +1039,6 @@ absl::Status QueuePair::ConnectToRemoteQp(
   memcpy(mod_rtr.ah_attr.grh.dgid.raw, remote_attributes_->gid().c_str(),
          kGidLength);
   mod_rtr.ah_attr.sl = 5;
-  // Requires for RC RTR: Minimum RNR NAK Timer Field Value. 1 means 1us, 12
-  // means 64 us, 26 means 82us, and 31 means 491us for RoCE.
   if (config_.min_rnr_timer()) {
     mod_rtr.min_rnr_timer = config_.min_rnr_timer();
   } else {
@@ -1112,7 +1104,7 @@ absl::Status QueuePair::ConnectToRemoteQp(
 }
 
 absl::Status QueuePair::ConnectToRemoteAh(
-    const proto::RemoteQueuePairAttributes &remote_attributes) {
+    const proto::RemoteQueuePairAttributes& remote_attributes) {
   if (state_ < State::kInitialized) {
     return absl::FailedPreconditionError(
         "Must initialize resources before connecting to remote.");
@@ -1209,11 +1201,11 @@ void QueuePair::StatisticsTracker::Flush() {
 }
 
 void QueuePair::StatisticsTracker::AppendPerSecondStatistics(
-    const std::vector<proto::ThroughputResult> &throughput_intervals,
+    const std::vector<proto::ThroughputResult>& throughput_intervals,
     int outstanding_op_count) {
   absl::MutexLock lock(&statistics_per_second_mutex_);
-  for (const auto &tput : throughput_intervals) {
-    proto::Statistics *stats_for_last_second =
+  for (const auto& tput : throughput_intervals) {
+    proto::Statistics* stats_for_last_second =
         statistics_per_second_.add_statistics();
     // Append measurements from the finished interval to the proto.
     *stats_for_last_second->mutable_throughput() = tput;
@@ -1285,16 +1277,16 @@ QueuePair::StatisticsTracker::GetFinalResults() const {
   return result;
 }
 
-proto::CurrentStats::PerOpTypeSizeCurrentStats *
+proto::CurrentStats::PerOpTypeSizeCurrentStats*
 QueuePair::StatisticsTracker::PopCurrentStatistics(
-    proto::CurrentStats::QueuePairCurrentStats *qp_stats_output) {
+    proto::CurrentStats::QueuePairCurrentStats* qp_stats_output) {
   absl::MutexLock lock(&statistics_per_second_mutex_);
   if (statistics_per_second_.statistics_size() == 0) {
     // Skip if no second intervals have completed yet.
     return nullptr;
   }
 
-  proto::CurrentStats::PerOpTypeSizeCurrentStats *appended_stats =
+  proto::CurrentStats::PerOpTypeSizeCurrentStats* appended_stats =
       qp_stats_output->add_per_op_type_size_current_stats();
 
   *appended_stats->mutable_stats_per_second() = statistics_per_second_;

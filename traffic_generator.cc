@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -64,7 +64,6 @@ namespace {
 
 constexpr int kMaxConnectThreads = 5;
 constexpr int kMaxCleanupThreads = 10;
-constexpr absl::Duration kCleanupGracePeriod = absl::Seconds(3);
 
 inline absl::Duration ToDuration(const google::protobuf::Duration& proto) {
   return absl::Seconds(proto.seconds()) + absl::Nanoseconds(proto.nanos());
@@ -317,7 +316,6 @@ absl::StatusOr<std::unique_ptr<TrafficGenerator>> TrafficGenerator::Create(
       return absl::InvalidArgumentError("Operation code must be valid");
     }
     if (traffic_pattern.traffic_type() == proto::TRAFFIC_TYPE_PINGPONG) {
-      //
       if (op_ratio.op_code() != proto::RDMA_OP_SEND_RECEIVE &&
           op_ratio.op_code() != proto::RDMA_OP_WRITE) {
         return absl::InvalidArgumentError(
@@ -515,8 +513,9 @@ absl::Status TrafficGenerator::ConnectQueuePairs(
   for (auto& [peer_id, resp] : peer_resp_map) {
     if (resp.remote_attribute_per_qp().empty()) {
       // For backward compatibility, keep this until completely deprecated.
-      //
+
       auto remote_attribute = resp.remote_attributes();
+      auto responder_ip_addr = resp.responder_ip_addr();
       pool.Add([&]() {
         {
           absl::MutexLock lock(&mutex);
@@ -532,7 +531,8 @@ absl::Status TrafficGenerator::ConnectQueuePairs(
       });
     }
     for (auto& remote_attribute : resp.remote_attribute_per_qp()) {
-      pool.Add([&]() {
+      auto responder_ip_addr = resp.responder_ip_addr();
+      pool.Add([&, remote_attribute, responder_ip_addr]() {
         {
           absl::MutexLock lock(&mutex);
           if (!pool_status.ok()) return;
@@ -615,23 +615,6 @@ bool TrafficGenerator::Post() {
   return true;
 }
 
-absl::Status TrafficGenerator::Cleanup() {
-  // Wait for a short grace period to ensure initiator traffic generators drain
-  // any outstanding operations before target QPs are destructed.
-  absl::SleepFor(kCleanupGracePeriod);
-
-  if (queue_pairs_.size() < 1000) {
-    return absl::OkStatus();
-  }
-  // Speed up the destruction of queue pairs, when requested.
-  utils::ThreadPool pool(kMaxCleanupThreads);
-  for (auto& qp : queue_pairs_) {
-    pool.Add([&]() { qp.second->Destroy(); });
-  }
-  pool.Wait();
-  return absl::OkStatus();
-}
-
 bool TrafficGenerator::Poll() {
   uint64_t now_ns = absl::GetCurrentTimeNanos();
   // Check if we should stop or start collecting measurements.
@@ -657,16 +640,10 @@ bool TrafficGenerator::Poll() {
   do {
     auto result = completion_queue_manager_->Poll();
     if (!result.ok()) {
-      LOG_EVERY_N(ERROR, 10000)
-          << "Error when polling operations: " << result.status();
-      auto key = std::make_pair(result.status().code(),
-                                std::string(result.status().message()));
-      if (failed_operation_polls_.contains(key)) {
-        failed_operation_polls_[key] += 1;
-      } else {
-        failed_operation_polls_[key] = 1;
-      }
-      continue;
+      LOG(ERROR) << "Aborting due to unexpected error polling completions: "
+                 << result.status();
+      abort_.Notify();
+      return false;
     }
 
     CompletionQueueManager::CompletionInfo& info = result.value();
@@ -689,13 +666,31 @@ bool TrafficGenerator::Poll() {
         }
         completion_qp = qp_it->second;
       }
-      auto status_or_count = completion_qp->HandleExternalCompletion(
-          info.completions[i], info.completion_before, info.completion_after);
-      if (status_or_count.ok()) {
-        completed_op_count += status_or_count.value();
-      } else {
-        LOG_EVERY_N(ERROR, 10000) << "Error handling wc: " << status_or_count;
+
+      if (info.completions[i].status != IBV_WC_SUCCESS) {
+        enum ibv_wc_status wc_status = info.completions[i].status;
+        LOG(WARNING) << "Completion received for wr_id "
+                     << info.completions[i].wr_id << " with status: \""
+                     << ibv_wc_status_str(wc_status) << "\"";
+        if (failed_operation_polls_.contains(wc_status)) {
+          failed_operation_polls_[wc_status] += 1;
+        } else {
+          failed_operation_polls_[wc_status] = 1;
+        }
       }
+
+      absl::StatusOr<int> status_or_count =
+          completion_qp->HandleExternalCompletion(info.completions[i],
+                                                  info.completion_before,
+                                                  info.completion_after);
+      if (!status_or_count.ok()) {
+        // Internal verbsmarks error; abort traffic generator.
+        LOG(ERROR) << "Aborting due to unexpected error handling completion: "
+                   << status_or_count.status();
+        abort_.Notify();
+        return false;
+      }
+      completed_op_count += *status_or_count;
     }
     load_generator_->Complete(completed_op_count);
   } while (num_completions > 0);
@@ -996,6 +991,16 @@ absl::Status TrafficGenerator::Run() {
   }
   *summary_.mutable_throughput() = total_tput;
 
+  if (total_failed_operation_polls > 0) {
+    LOG(WARNING) << "Total completions with error status: "
+                 << total_failed_operation_polls;
+    for (auto& [error_status, count] : failed_operation_polls_) {
+      LOG(WARNING) << "Completion status " << static_cast<int>(error_status)
+                   << " (" << ibv_wc_status_str(error_status)
+                   << ") count: " << count;
+    }
+  }
+
   if (remaining_outstanding_ops_ > 0 &&
       !absl::GetFlag(FLAGS_ignore_outstanding_ops_at_cutoff)) {
     LOG(ERROR) << "Summary at failing point: " << summary_;
@@ -1080,6 +1085,28 @@ void TrafficGenerator::Abort() {
   abort_.Notify();
   if (special_traffic_generator_) {
     special_traffic_generator_->Abort();
+  }
+}
+
+void TrafficGenerator::Cleanup() {
+  // With a small QP count, destructor will handle cleanup.
+  if (queue_pairs_.size() < 1000) {
+    return;
+  }
+
+  // With large QP count, parallelize QP cleanup to save time. Add a thread
+  // pool task to destroy each QP and await completion in the destructor.
+  cleanup_thread_pool_ =
+      std::make_unique<utils::ThreadPool>(kMaxCleanupThreads);
+  for (auto& qp : queue_pairs_) {
+    cleanup_thread_pool_->Add([&]() { qp.second->Destroy(); });
+  }
+}
+
+TrafficGenerator::~TrafficGenerator() {
+  // If a cleanup thread pool was created, wait for all QPs to be destroyed.
+  if (cleanup_thread_pool_) {
+    cleanup_thread_pool_->Wait();
   }
 }
 

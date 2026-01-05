@@ -54,7 +54,6 @@ class CompletionQueueManager {
   // assigned CQ.
   virtual uint64_t GetNextWrIdForQueuePair(int32_t queue_pair_id);
 
-  //
   // A structure that holds the number of completed operations, split into the
   // number that were initiated by this queue pair and the number that were
   // received by this queue pair. It also carries timestamps when applicable.

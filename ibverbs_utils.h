@@ -42,7 +42,7 @@ namespace ibverbs_utils {
 // used with std::unique_ptr. They destroy the resource, logging the error if it
 // fails. If the resource is null, they do nothing.
 struct ContextDeleter {
-  void operator()(ibv_context *context) {
+  void operator()(ibv_context* context) {
     if (context != nullptr) {
       DLOG(INFO) << "ibv_close_device ";
       if (int ret = ibv_close_device(context); ret != 0) {
@@ -53,7 +53,7 @@ struct ContextDeleter {
   }
 };
 struct QueuePairDeleter {
-  void operator()(ibv_qp *qp) {
+  void operator()(ibv_qp* qp) {
     if (qp != nullptr) {
       LOG_EVERY_N(INFO, 100000) << "ibv_destroy_qp " << qp->qp_num;
       DLOG(INFO) << "ibv_destroy_qp " << qp->qp_num;
@@ -65,7 +65,7 @@ struct QueuePairDeleter {
   }
 };
 struct CompletionQueueDeleter {
-  void operator()(ibv_cq *cq) {
+  void operator()(ibv_cq* cq) {
     if (cq != nullptr) {
       DLOG(INFO) << "ibv_destroy_cp " << cq;
       if (int ret = ibv_destroy_cq(cq); ret != 0) {
@@ -75,7 +75,7 @@ struct CompletionQueueDeleter {
   }
 };
 struct MemoryRegionDeleter {
-  void operator()(ibv_mr *mr) {
+  void operator()(ibv_mr* mr) {
     if (mr != nullptr) {
       DLOG(INFO) << "ibv_dreg_mr ";
       if (int ret = ibv_dereg_mr(mr); ret != 0) {
@@ -86,7 +86,7 @@ struct MemoryRegionDeleter {
   }
 };
 struct ProtectionDomainDeleter {
-  void operator()(ibv_pd *pd) {
+  void operator()(ibv_pd* pd) {
     if (pd != nullptr) {
       DLOG(INFO) << "ibv_dealloc_pd";
       if (int ret = ibv_dealloc_pd(pd); ret != 0) {
@@ -97,7 +97,7 @@ struct ProtectionDomainDeleter {
   }
 };
 struct AddressHandleDeleter {
-  void operator()(ibv_ah *ah) {
+  void operator()(ibv_ah* ah) {
     if (ah != nullptr) {
       DLOG(INFO) << "ibv_destroy_ah";
       if (int ret = ibv_destroy_ah(ah); ret != 0) {
@@ -108,7 +108,7 @@ struct AddressHandleDeleter {
   }
 };
 struct CompChannelDeleter {
-  void operator()(ibv_comp_channel *ch) {
+  void operator()(ibv_comp_channel* ch) {
     if (ch != nullptr) {
       DLOG(INFO) << "ibv_destroy_comp_channel " << ch;
       if (int ret = ibv_destroy_comp_channel(ch); ret != 0) {
@@ -151,11 +151,11 @@ struct LocalIbverbsAddress {
 
 // Returns the first valid address of the provided context, if there is one.
 // Prefers IPv6 addresses to IPv4 addresses.
-absl::StatusOr<LocalIbverbsAddress> GetLocalAddress(ibv_context *context);
+absl::StatusOr<LocalIbverbsAddress> GetLocalAddress(ibv_context* context);
 
 // Returns the max_qp_wr from ibv_query_device, which is the maximum number of
 // outstanding WR on any work queue.
-absl::StatusOr<int> GetMaxQpWr(ibv_context *context);
+absl::StatusOr<int> GetMaxQpWr(ibv_context* context);
 
 // Wait the async event in a blocking way and ack it. The function should run in
 // a separate thread for handling AEs.
@@ -163,10 +163,10 @@ void WaitAndAckAsyncEvents(absl::string_view device_name);
 
 // Returns the first valid address of the provided context. Crashes if no valid
 // address is available.
-LocalIbverbsAddress GetLocalAddressOrDie(ibv_context *context);
+LocalIbverbsAddress GetLocalAddressOrDie(ibv_context* context);
 
 // Converts an `in6_addr` into a string. If V4 mapped, returns an IPv4 string.
-std::string IpToString(in6_addr *addr6);
+std::string IpToString(in6_addr* addr6);
 
 }  // namespace ibverbs_utils
 }  // namespace verbsmarks

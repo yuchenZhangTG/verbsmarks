@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -37,7 +37,7 @@ constexpr int kDefaultMaxCqe = 1024;
 constexpr int64_t kPollingTimeoutNanos = 30 * utils::kSecondInNanoseconds;
 
 absl::Status CompletionQueueManager::InitializeResources(
-    ibv_context *verbs_context, int num_completion_queues, int queue_depth) {
+    ibv_context* verbs_context, int num_completion_queues, int queue_depth) {
   if (verbs_context == nullptr) {
     return absl::InvalidArgumentError("verbs_context must not be null");
   }
@@ -119,7 +119,7 @@ int CompletionQueueManager::GetCompletionQueueIndex(int32_t queue_pair_id) {
   return queue_pair_id % completion_queues_.size();
 }
 
-absl::StatusOr<ibv_cq *> CompletionQueueManager::GetCompletionQueue(
+absl::StatusOr<ibv_cq*> CompletionQueueManager::GetCompletionQueue(
     int32_t queue_pair_id) {
   if (ABSL_PREDICT_FALSE(completion_queues_.empty())) {
     return absl::FailedPreconditionError("Completion queues not initialized");
@@ -206,7 +206,7 @@ CompletionQueueManager::PollUntilTimeout() {
 }
 
 absl::Status EventCompletionQueueManager::InitializeResources(
-    ibv_context *verbs_context, int num_completion_queues, int queue_depth) {
+    ibv_context* verbs_context, int num_completion_queues, int queue_depth) {
   if (verbs_context == nullptr) {
     return absl::InvalidArgumentError("verbs_context must not be null");
   }
@@ -226,8 +226,8 @@ absl::Status EventCompletionQueueManager::InitializeResources(
 
 absl::StatusOr<CompletionQueueManager::CompletionInfo>
 EventCompletionQueueManager::PollUntilTimeout() {
-  struct ibv_cq *ev_cq;
-  void *ev_ctx;
+  struct ibv_cq* ev_cq;
+  void* ev_ctx;
   CompletionQueueManager::CompletionInfo completion_info = {0, 0, 0,
                                                             completions_};
 

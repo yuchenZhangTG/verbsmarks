@@ -82,7 +82,7 @@ class FixedDelayLoadGenerator : public LoadGenerator {
   explicit FixedDelayLoadGenerator(const absl::Duration delay_between_posts,
                                    const absl::Duration initial_delay,
                                    int num_to_post,
-                                   LoadGeneratorClock *clock = &default_clock)
+                                   LoadGeneratorClock* clock = &default_clock)
       : delay_between_posts_(delay_between_posts),
         initial_delay_(initial_delay),
         num_to_post_(num_to_post),
@@ -120,7 +120,7 @@ class FixedDelayLoadGenerator : public LoadGenerator {
   const absl::Duration initial_delay_;
   // The number of operations to post at once.
   const int num_to_post_;
-  LoadGeneratorClock *clock_;
+  LoadGeneratorClock* clock_;
 
   // The timestamp that should pass before the next operation is posted. nullptr
   // if `Start` has not yet been called.
@@ -136,7 +136,7 @@ class PoissonArrivalLoadGenerator : public LoadGenerator {
   // should be posted following poisson arrival.
   explicit PoissonArrivalLoadGenerator(
       const absl::Duration mean_interval,
-      LoadGeneratorClock *clock = &default_clock);
+      LoadGeneratorClock* clock = &default_clock);
 
   // Sets the time of the first post operation to the current time, as the first
   // operation can be posted at the start of the experiment.
@@ -161,7 +161,7 @@ class PoissonArrivalLoadGenerator : public LoadGenerator {
   // The rate parameter. Will be passed to absl::Exponential. Calculate in the
   // constructor by 1 / mean_interval.
   const double lambda_;
-  LoadGeneratorClock *clock_;
+  LoadGeneratorClock* clock_;
 
   // The timestamp that should pass before the next operation is posted.
   absl::Time next_post_time_;
@@ -187,9 +187,9 @@ class BarrieredBurstLoadGenerator : public LoadGenerator {
   explicit BarrieredBurstLoadGenerator(
       const absl::Duration rest_length,
       std::function<void(verbsmarks::proto::BarrierRequest,
-                         verbsmarks::proto::BarrierResponse *)>
-          *barrier_request_func,
-      LoadGeneratorClock *clock = &default_clock);
+                         verbsmarks::proto::BarrierResponse*)>*
+          barrier_request_func,
+      LoadGeneratorClock* clock = &default_clock);
 
   ~BarrieredBurstLoadGenerator() override {
     {
@@ -216,11 +216,11 @@ class BarrieredBurstLoadGenerator : public LoadGenerator {
   absl::Mutex mutex_;
   void BarrierRequester(
       std::function<void(verbsmarks::proto::BarrierRequest,
-                         verbsmarks::proto::BarrierResponse *)> *);
+                         verbsmarks::proto::BarrierResponse*)>*);
 
   // The length of the rest period. Rest can be zero.
   const absl::Duration rest_length_;
-  LoadGeneratorClock *clock_;
+  LoadGeneratorClock* clock_;
 
   // The timestamp that should pass before the next operation is posted.
   // Infinite future if `Start` has not yet been called.
@@ -267,8 +267,8 @@ class ClosedLoopLoadGenerator : public LoadGenerator {
 };
 
 absl::StatusOr<std::unique_ptr<LoadGenerator>> CreateLoadGenerator(
-    const proto::PerFollowerTrafficPattern &pattern, int min_wqe_cap,
-    LoadGeneratorClock *clock = &default_clock);
+    const proto::PerFollowerTrafficPattern& pattern, int min_wqe_cap,
+    LoadGeneratorClock* clock = &default_clock);
 
 }  // namespace verbsmarks
 

@@ -1,11 +1,11 @@
 // Copyright 2024 Google LLC
-
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -92,8 +92,9 @@ absl::Status VerbsMarksFollower::JoinQuorum() {
   request.set_follower_alias(alias_);
 
   grpc::ClientContext context;
-  context.set_deadline(std::chrono::system_clock::now() +
-                       utils::kGrpcLongRequestTimeout);
+  context.set_deadline(
+      std::chrono::system_clock::now() +
+      std::chrono::seconds(absl::GetFlag(FLAGS_grpc_long_timeout_seconds)));
   grpc::Status grpc_status =
       leader_stub_->SeekQuorum(&context, request, &response);
 
@@ -136,8 +137,9 @@ absl::Status VerbsMarksFollower::GetReady() {
   // First request ReadyResponse to the leader. It will contain information
   // required.
   grpc::ClientContext context;
-  context.set_deadline(std::chrono::system_clock::now() +
-                       utils::kGrpcRequestTimeout);
+  context.set_deadline(
+      std::chrono::system_clock::now() +
+      std::chrono::seconds(absl::GetFlag(FLAGS_grpc_timeout_seconds)));
   LOG(INFO) << "Follower sending GetReady to leader";
   if (grpc::Status status =
           leader_stub_->GetReady(&context, request, &response);
@@ -151,6 +153,7 @@ absl::Status VerbsMarksFollower::GetReady() {
                << response.status();
     return absl::FailedPreconditionError(response.status().DebugString());
   }
+  DLOG(INFO) << "Follower received ReadyResponse from leader";
 
   auto status_or_qp_max_wr = ibverbs_utils::GetMaxQpWr(verbs_context_.get());
   if (!status_or_qp_max_wr.ok()) {
@@ -165,6 +168,7 @@ absl::Status VerbsMarksFollower::GetReady() {
           qp_max_wr));
     }
   }
+  DLOG(INFO) << "Traffic pattern validated against ibv_device_attr.";
 
   // If memory resource policy is not set in config, set a default values.
   proto::MemoryResourcePolicy memory_resource_policy;
@@ -176,6 +180,7 @@ absl::Status VerbsMarksFollower::GetReady() {
     memory_resource_policy.set_num_mrs_per_qp(1);
   }
   // Initialize all protection domains, memory blocks and memory regions.
+  DLOG(INFO) << "Initializing memory resources.";
   auto status = memory_manager_.InitializeResources(
       verbs_context_.get(), memory_resource_policy,
       response.per_follower_traffic_patterns());
@@ -290,8 +295,9 @@ absl::Status VerbsMarksFollower::SendStartExperimentRequest(int raw_code) {
   request.mutable_status()->set_code(raw_code);
   // Only proceed if reader gives an OK.
   grpc::ClientContext context;
-  context.set_deadline(std::chrono::system_clock::now() +
-                       utils::kGrpcRequestTimeout);
+  context.set_deadline(
+      std::chrono::system_clock::now() +
+      std::chrono::seconds(absl::GetFlag(FLAGS_grpc_timeout_seconds)));
   if (grpc::Status status =
           leader_stub_->StartExperiment(&context, request, &response);
       !status.ok()) {
@@ -410,8 +416,9 @@ absl::Status VerbsMarksFollower::SendHeartbeatsUntilFinished() {
     *request.mutable_current_stats() = GetCurrentStatistics();
 
     grpc::ClientContext context;
-    context.set_deadline(std::chrono::system_clock::now() +
-                         utils::kGrpcRequestTimeout);
+    context.set_deadline(
+        std::chrono::system_clock::now() +
+        std::chrono::seconds(absl::GetFlag(FLAGS_grpc_timeout_seconds)));
     auto rpc_status = leader_stub_->Heartbeat(&context, request, &response);
     if (!rpc_status.ok()) {
       LOG(ERROR) << "Heartbeat to leader failed with status: "
@@ -473,6 +480,7 @@ proto::ResultRequest VerbsMarksFollower::GetResults() {
   std::vector<absl::Duration> p999_latencies;
   std::vector<absl::Duration> p9999_latencies;
   absl::Duration min_latency = absl::InfiniteDuration();
+  absl::Duration max_latency = absl::ZeroDuration();
 
   for (auto& traffic_generator : traffic_generators_) {
     const proto::PerTrafficResult& single_result =
@@ -503,6 +511,11 @@ proto::ResultRequest VerbsMarksFollower::GetResults() {
       min_latency =
           utils::ProtoToDuration(single_result.latency().min_latency());
     }
+    if (max_latency <
+        utils::ProtoToDuration(single_result.latency().max_latency())) {
+      max_latency =
+          utils::ProtoToDuration(single_result.latency().max_latency());
+    }
 
     utils::AppendThroughputResult(total_tput, single_result.throughput());
   }
@@ -526,6 +539,10 @@ proto::ResultRequest VerbsMarksFollower::GetResults() {
     }
     utils::DurationToProto(min_latency,
                            *request.mutable_latency()->mutable_min_latency());
+    utils::DurationToProto(
+        average_latency, *request.mutable_latency()->mutable_average_latency());
+    utils::DurationToProto(max_latency,
+                           *request.mutable_latency()->mutable_max_latency());
   }
   *request.mutable_throughput() = total_tput;
 
@@ -541,21 +558,11 @@ absl::Status VerbsMarksFollower::FinishExperiment() {
     absl::MutexLock lock(&traffic_generators_mutex_);
     num_traffic_generators = traffic_generators_.size();
   }
-  utils::ThreadPool pool(num_traffic_generators);
-  // Cleanup all traffic generators to speed up qp destroy. This will be a no-op
-  // if the traffic generators has less than 1K Qps.
-  {
-    absl::MutexLock lock(&traffic_generators_mutex_);
-    for (auto& traffic_generator : traffic_generators_) {
-      pool.Add([&]() {
-        LOG(INFO) << "Cleaning up traffic generator: "
-                  << traffic_generator.second->Cleanup();
-      });
-    }
-  }
+
   grpc::ClientContext context;
-  context.set_deadline(std::chrono::system_clock::now() +
-                       utils::kGrpcLongRequestTimeout);
+  context.set_deadline(
+      std::chrono::system_clock::now() +
+      std::chrono::seconds(absl::GetFlag(FLAGS_grpc_long_timeout_seconds)));
   grpc::Status grpc_status =
       leader_stub_->FinishExperiment(&context, request, &response);
 
@@ -565,8 +572,16 @@ absl::Status VerbsMarksFollower::FinishExperiment() {
     return absl::Status(static_cast<absl::StatusCode>(grpc_status.error_code()),
                         grpc_status.error_message());
   }
-  LOG(INFO) << "Reporting is done. Wait for clean up to finish.";
-  pool.Wait();
+
+  LOG(INFO) << "Reporting is done. Starting traffic generator cleanup.";
+  // Preemptively clean up all traffic generators to speed up QP destroy. This
+  // is a no-op for small QP counts, which are handled by the destructor.
+  {
+    absl::MutexLock lock(&traffic_generators_mutex_);
+    for (auto& traffic_generator : traffic_generators_) {
+      traffic_generator.second->Cleanup();
+    }
+  }
   return absl::OkStatus();
 }
 
